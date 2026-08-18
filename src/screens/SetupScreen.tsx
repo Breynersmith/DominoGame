@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Avatar } from '../components/Avatar';
 import { IconoDado } from '../components/icons/IconoDado';
 import { IconoEngranaje } from '../components/icons/IconoEngranaje';
 import { IconoGrupo } from '../components/icons/IconoGrupo';
@@ -8,7 +9,7 @@ import { IconoPersona } from '../components/icons/IconoPersona';
 import { IconoPlay } from '../components/icons/IconoPlay';
 import { IconoPozo } from '../components/icons/IconoPozo';
 import { IconoRobot } from '../components/icons/IconoRobot';
-import { MAX_JUGADORES, MIN_JUGADORES } from '../constants/gameConfig';
+import { MAX_JUGADORES, MIN_JUGADORES, fichasPorJugadorPermitidas } from '../constants/gameConfig';
 import { FONT_MONTSERRAT_EXTRA } from '../constants/fonts';
 import { useT } from '../i18n/useT';
 import { useAppStore } from '../store/appStore';
@@ -16,6 +17,7 @@ import { useGameStore, ConfigJugador } from '../store/gameStore';
 
 const NOMBRES_DEFECTO = ['Jugador 1', 'Jugador 2', 'Jugador 3', 'Jugador 4'];
 const APUESTAS = [0, 10, 25, 50, 100];
+const COLORES = ['#006c49', '#0f766e', '#1d4ed8', '#7c3aed', '#be185d', '#c2410c', '#a16207', '#334155'];
 
 const COLOR_MENTA = '#6FFBBE';
 const COLOR_DORADO = '#FACC15';
@@ -25,28 +27,36 @@ export function SetupScreen() {
   const t = useT();
   const iniciar = useGameStore(s => s.iniciar);
   const abrirAjustes = useAppStore(s => s.abrirAjustes);
+  const irA = useAppStore(s => s.irA);
   const perfil = useAppStore(s => s.perfil);
   const saldo = useAppStore(s => s.saldo);
   const salaConfig = useAppStore(s => s.salaConfig);
+  const colorPara = (i: number) =>
+    i === 0 ? perfil?.color ?? COLORES[0] : COLORES[i % COLORES.length];
+  const [modoJuego, setModoJuego] = useState<'bot' | 'online'>('bot');
   const [jugadores, setJugadores] = useState<ConfigJugador[]>(
     NOMBRES_DEFECTO.slice(0, MIN_JUGADORES).map((nombre, i) => ({
       nombre: i === 0 && perfil ? perfil.nombre : nombre,
       esBot: false,
+      color: colorPara(i),
     }))
   );
   const [robarPozo, setRobarPozo] = useState(true);
   const [apuesta, setApuesta] = useState(salaConfig?.apuesta ?? 0);
+  const [fichasPorJugador, setFichasPorJugador] = useState(7);
 
   const cantidad = jugadores.length;
   const pozoTotal = apuesta * cantidad;
   const sinSaldo = apuesta > saldo;
   const todoListo = jugadores.every(j => j.nombre.trim().length > 0) && !sinSaldo;
+  const fichasValidas = fichasPorJugadorPermitidas(cantidad);
+  const fichasEfectivas = fichasValidas.includes(fichasPorJugador) ? fichasPorJugador : 7;
 
   const cambiarCantidad = (delta: number) => {
     const nueva = cantidad + delta;
     if (nueva < MIN_JUGADORES || nueva > MAX_JUGADORES) return;
     const nuevos = NOMBRES_DEFECTO.slice(0, nueva).map((nombre, i) =>
-      jugadores[i] ?? { nombre, esBot: false }
+      jugadores[i] ?? { nombre, esBot: false, color: colorPara(i) }
     );
     setJugadores(nuevos);
   };
@@ -71,15 +81,49 @@ export function SetupScreen() {
           <IconoDado color={COLOR_DORADO} size={22} />
         </View>
         <Text style={styles.tituloBarra}>{t('appName')}</Text>
-        <Pressable style={styles.botonIcono} onPress={abrirAjustes}>
-          <IconoEngranaje color={COLOR_MENTA} size={22} />
-        </Pressable>
+        <View style={styles.barraDerecha}>
+          <Pressable onPress={() => irA('perfil')} style={styles.botonPerfil}>
+            <Avatar
+              foto={perfil?.foto}
+              color={perfil?.color ?? '#006c49'}
+              nombre={perfil?.nombre}
+              tamano={34}
+            />
+          </Pressable>
+          <Pressable style={styles.botonIcono} onPress={abrirAjustes}>
+            <IconoEngranaje color={COLOR_MENTA} size={22} />
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.contenido} showsVerticalScrollIndicator={false}>
         <View style={styles.cabecera}>
           <Text style={styles.tituloCabecera}>{t('appName')}</Text>
           <Text style={styles.subtituloCabecera}>{t('subtitulo')}</Text>
+        </View>
+
+        <View style={styles.seccionModo}>
+          <Pressable
+            style={[styles.cardModo, modoJuego === 'bot' && styles.cardModoActivo]}
+            onPress={() => setModoJuego('bot')}
+          >
+            <IconoRobot color={modoJuego === 'bot' ? COLOR_MENTA : '#9ca3af'} size={28} />
+            <Text style={[styles.textoModo, modoJuego === 'bot' && styles.textoModoActivo]}>
+              {t('jugarVsBot')}
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.cardModo, modoJuego === 'online' && styles.cardModoActivo]}
+            onPress={() => {
+              setModoJuego('online');
+              irA('lobby');
+            }}
+          >
+            <IconoGrupo color={modoJuego === 'online' ? COLOR_MENTA : '#9ca3af'} size={28} />
+            <Text style={[styles.textoModo, modoJuego === 'online' && styles.textoModoActivo]}>
+              {t('multijugador')}
+            </Text>
+          </Pressable>
         </View>
 
         {salaConfig && salaConfig.codigo ? (
@@ -180,6 +224,34 @@ export function SetupScreen() {
               />
             </View>
           </View>
+
+          <View style={styles.tarjeta}>
+            <View style={styles.iconoOpcion}>
+              <IconoDado color={COLOR_MENTA} size={26} />
+            </View>
+            <View style={styles.infoOpcion}>
+              <Text style={styles.tituloOpcion}>{t('fichasPorJugador')}</Text>
+              <Text style={styles.descripcionOpcion}>{t('fichasPorJugadorDesc')}</Text>
+            </View>
+            <View style={styles.filaFichas}>
+              {fichasValidas.map(n => (
+                <Pressable
+                  key={n}
+                  style={[styles.chipFichas, fichasEfectivas === n && styles.chipFichasActivo]}
+                  onPress={() => setFichasPorJugador(n)}
+                >
+                  <Text
+                    style={[
+                      styles.textoChipFichas,
+                      fichasEfectivas === n && styles.textoChipFichasActivo,
+                    ]}
+                  >
+                    {n}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
         </View>
 
         <View style={styles.seccion}>
@@ -224,7 +296,7 @@ export function SetupScreen() {
       >
         <Pressable
           style={[styles.botonIniciar, !todoListo && styles.deshabilitado]}
-          onPress={() => todoListo && iniciar(jugadores, { robarPozo, apuesta })}
+          onPress={() => todoListo && iniciar(jugadores, { robarPozo, apuesta, fichasPorJugador: fichasEfectivas })}
         >
           <LinearGradient
             colors={['#00B96B', '#007A44']}
@@ -264,6 +336,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.05)',
   },
+  barraDerecha: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  botonPerfil: {
+    borderWidth: 2,
+    borderColor: 'rgba(111,251,190,0.4)',
+    borderRadius: 20,
+  },
   reservaIcono: {
     width: 40,
     height: 40,
@@ -299,6 +381,35 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     marginTop: 4,
+  },
+  seccionModo: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 20,
+  },
+  cardModo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    paddingVertical: 16,
+  },
+  cardModoActivo: {
+    borderColor: COLOR_MENTA,
+    backgroundColor: 'rgba(111,251,190,0.12)',
+  },
+  textoModo: {
+    color: '#9ca3af',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  textoModoActivo: {
+    color: COLOR_MENTA,
   },
   seccion: {
     marginTop: 24,
@@ -429,6 +540,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  filaFichas: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  chipFichas: {
+    minWidth: 44,
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+  },
+  chipFichasActivo: {
+    borderColor: COLOR_MENTA,
+    backgroundColor: 'rgba(111,251,190,0.15)',
+  },
+  textoChipFichas: {
+    color: '#d1d5db',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  textoChipFichasActivo: {
+    color: COLOR_MENTA,
   },
   iconoOpcion: {
     marginTop: 2,

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { PantallaBase, Tarjeta, COLOR_AMBAR, COLOR_MENTA } from '../components/ui';
-import { FONT_MONTSERRAT_EXTRA } from '../constants/fonts';
+import { Avatar } from '../components/Avatar';
+import { PantallaBase, COLOR_AMBAR, COLOR_MENTA } from '../components/ui';
 import { useT } from '../i18n/useT';
 import { useAppStore, Vista } from '../store/appStore';
 
@@ -15,17 +15,20 @@ export function PerfilScreen() {
   return (
     <PantallaBase titulo={t('perfil')} onVolver={volverAtras}>
       <ScrollView contentContainerStyle={styles.contenido} showsVerticalScrollIndicator={false}>
-        <Tarjeta estilo={styles.tarjetaCuenta}>
-          <View style={[styles.avatar, { backgroundColor: perfil?.color ?? '#006c49' }]}>
-            <Text style={styles.avatarInicial}>
-              {(perfil?.nombre ?? '?').charAt(0).toUpperCase()}
-            </Text>
-          </View>
+        <Pressable style={styles.tarjetaCuenta} onPress={() => irA('editarPerfil')}>
+          <Avatar
+            foto={perfil?.foto}
+            color={perfil?.color ?? '#006c49'}
+            nombre={perfil?.nombre}
+            tamano={80}
+            estilo={styles.avatar}
+          />
           <Text style={styles.nombre}>{perfil?.nombre ?? t('jugarInvitado')}</Text>
           <Text style={styles.saldo}>
             {saldo} {t('creditos')}
           </Text>
-        </Tarjeta>
+          <Text style={styles.cambiarFoto}>{t('cambiarFoto')}</Text>
+        </Pressable>
 
         <View style={styles.seccion}>
           <Fila icono="b" label={t('billetera')} onPress={() => irA('billetera')} />
@@ -75,18 +78,14 @@ const styles = StyleSheet.create({
     paddingVertical: 28,
   },
   avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
     borderWidth: 2,
     borderColor: 'rgba(111,251,190,0.4)',
   },
-  avatarInicial: {
-    color: '#ffffff',
-    fontSize: 36,
-    fontFamily: FONT_MONTSERRAT_EXTRA,
+  cambiarFoto: {
+    color: COLOR_MENTA,
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 10,
   },
   nombre: {
     color: '#ffffff',

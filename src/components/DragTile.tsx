@@ -10,6 +10,7 @@ interface Props {
   jugable?: boolean;
   oculta?: boolean;
   deshabilitada?: boolean;
+  color?: string;
   onPress?: () => void;
   onDragInicio?: (x: number, y: number) => void;
   onDragMover?: (x: number, y: number) => void;
@@ -24,6 +25,7 @@ export function DragTile({
   jugable = true,
   oculta = false,
   deshabilitada = false,
+  color,
   onPress,
   onDragInicio,
   onDragMover,
@@ -70,6 +72,7 @@ export function DragTile({
         size={size}
         seleccionada={seleccionada}
         jugable={jugable}
+        color={color}
         onPress={onPress}
       />
     </View>

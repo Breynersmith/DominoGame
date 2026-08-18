@@ -13,6 +13,13 @@ import {
 } from './types';
 
 export const FICHAS_POR_JUGADOR = 7;
+export const TOTAL_FICHAS = 28;
+export const FICHAS_POR_JUGADOR_OPCIONES = [7, 9, 14] as const;
+
+// Número de fichas por jugador posible según cuántos jugadores haya
+export function fichasPorJugadorPermitidas(cantidadJugadores: number): number[] {
+  return FICHAS_POR_JUGADOR_OPCIONES.filter(n => n * cantidadJugadores <= TOTAL_FICHAS);
+}
 
 // Genera el set completo de fichas (doble-6 = 28 fichas)
 export function generarFichas(): Ficha[] {
@@ -48,37 +55,31 @@ export function repartirFichas(
   const manos: Ficha[][] = [];
   let indice = 0;
 
-  if (conPozo) {
-    for (let i = 0; i < cantidadJugadores; i++) {
-      manos.push(barajadas.slice(indice, indice + fichasPorJugador));
-      indice += fichasPorJugador;
-    }
-  } else {
-    for (let i = 0; i < cantidadJugadores; i++) manos.push([]);
-    for (let k = 0; k < barajadas.length; k++) {
-      manos[k % cantidadJugadores].push(barajadas[k]);
-    }
-    indice = barajadas.length;
+  // Siempre se reparte exactamente fichasPorJugador por jugador,
+  // tanto con pozo como sin él.
+  for (let i = 0; i < cantidadJugadores; i++) {
+    manos.push(barajadas.slice(indice, indice + fichasPorJugador));
+    indice += fichasPorJugador;
   }
 
-  const pozo = barajadas.slice(indice);
+  const sobrantes = barajadas.slice(indice);
 
-  // Si el doble-6 quedó en el pozo, lo intercambiamos con una ficha de una mano
-  if (pozo.length > 0) {
+  // Si el doble-6 quedó entre las sobrantes, lo intercambiamos con una ficha de una mano
+  if (sobrantes.length > 0) {
     const tieneSeis = manos.some(mano => mano.some(f => f.id === '6-6'));
     if (!tieneSeis) {
-      const indicePozo = pozo.findIndex(f => f.id === '6-6');
-      if (indicePozo >= 0) {
+      const indiceSobrante = sobrantes.findIndex(f => f.id === '6-6');
+      if (indiceSobrante >= 0) {
         const manoTarget = manos[Math.floor(Math.random() * manos.length)];
         const indiceMano = Math.floor(Math.random() * manoTarget.length);
         const intercambiada = manoTarget[indiceMano];
-        manoTarget[indiceMano] = pozo[indicePozo];
-        pozo[indicePozo] = intercambiada;
+        manoTarget[indiceMano] = sobrantes[indiceSobrante];
+        sobrantes[indiceSobrante] = intercambiada;
       }
     }
   }
 
-  return { manos, pozo };
+  return { manos, pozo: conPozo ? sobrantes : [] };
 }
 
 // Encuentra el jugador que inicia: siempre el que tiene el doble-6 (si nadie lo
@@ -102,23 +103,56 @@ export function encontrarJugadorInicial(jugadores: Jugador[]): number {
   return mejorIndice;
 }
 
+// Garantiza que cada jugador tenga un color distinto: se respeta el color
+// elegido mientras no esté repetido; si lo está, se asigna un color libre.
+export const PALETA_COLORES = [
+  '#2563eb',
+  '#16a34a',
+  '#f59e0b',
+  '#dc2626',
+  '#7c3aed',
+  '#0891b2',
+  '#db2777',
+  '#ca8a04',
+];
+
+export function resolverColoresDistintos(
+  colores?: (string | undefined)[],
+): (string | undefined)[] | undefined {
+  if (!colores) return colores;
+  const usados = new Set<string>();
+  return colores.map(color => {
+    if (color && !usados.has(color)) {
+      usados.add(color);
+      return color;
+    }
+    const libre = PALETA_COLORES.find(c => !usados.has(c)) ?? PALETA_COLORES[0];
+    usados.add(libre);
+    return libre;
+  });
+}
+
 // Inicializa una partida nueva
 export function iniciarPartida(
   nombresJugadores: string[],
   opciones: OpcionesPartida = { robarPozo: true },
+  colores?: (string | undefined)[],
 ): EstadoPartida {
   const fichas = generarFichas();
+  const fichasPorJugador = opciones.fichasPorJugador ?? FICHAS_POR_JUGADOR;
   const { manos, pozo } = repartirFichas(
     fichas,
     nombresJugadores.length,
-    FICHAS_POR_JUGADOR,
+    fichasPorJugador,
     opciones.robarPozo,
   );
 
+  const coloresResueltos = resolverColoresDistintos(colores);
   const jugadores: Jugador[] = nombresJugadores.map((nombre, i) => ({
     id: `jugador-${i}`,
     nombre,
     mano: manos[i],
+    color: coloresResueltos?.[i],
   }));
 
   const turnoInicial = encontrarJugadorInicial(jugadores);
@@ -194,16 +228,16 @@ export function aplicarJugada(estado: EstadoPartida, jugada: Jugada): EstadoPart
   let fichaEnTablero: FichaEnTablero;
 
   if (estado.tablero.length === 0) {
-    fichaEnTablero = { ...jugada.ficha, rotada: false };
+    fichaEnTablero = { ...jugada.ficha, rotada: false, jugadorId: jugada.jugadorId };
     nuevoExtremoIzquierdo = jugada.ficha.lado1;
     nuevoExtremoDerecho = jugada.ficha.lado2;
   } else if (jugada.extremo === 'izquierdo') {
     const coincide = jugada.ficha.lado2 === estado.extremoIzquierdo;
-    fichaEnTablero = { ...jugada.ficha, rotada: !coincide };
+    fichaEnTablero = { ...jugada.ficha, rotada: !coincide, jugadorId: jugada.jugadorId };
     nuevoExtremoIzquierdo = coincide ? jugada.ficha.lado1 : jugada.ficha.lado2;
   } else {
     const coincide = jugada.ficha.lado1 === estado.extremoDerecho;
-    fichaEnTablero = { ...jugada.ficha, rotada: !coincide };
+    fichaEnTablero = { ...jugada.ficha, rotada: !coincide, jugadorId: jugada.jugadorId };
     nuevoExtremoDerecho = coincide ? jugada.ficha.lado2 : jugada.ficha.lado1;
   }
 

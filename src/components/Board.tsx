@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { EstadoPartida } from '../game/types';
+import { EstadoPartida, Jugador } from '../game/types';
 import { useT } from '../i18n/useT';
 import { calcularLayout, LayoutResultado } from './layoutTablero';
 import { Tile } from './Tile';
@@ -15,6 +15,9 @@ export function Board({ estado, onLayoutListo }: Props) {
   const [tamano, setTamano] = useState({ ancho: 0, alto: 0 });
   const tamanoRef = useRef({ ancho: 0, alto: 0 });
   const fichasLogueadas = useRef<Set<string>>(new Set());
+
+  const colorDe = (jugadorId?: string) =>
+    estado.jugadores.find((j: Jugador) => j.id === jugadorId)?.color;
 
   const layout = useMemo(
     () =>
@@ -96,6 +99,7 @@ export function Board({ estado, onLayoutListo }: Props) {
                 valores={ficha.rotada !== f.invertida ? [ficha.lado2, ficha.lado1] : [ficha.lado1, ficha.lado2]}
                 size={layout.tamano}
                 horizontal={f.horizontal}
+                color={colorDe(ficha.jugadorId)}
               />
             </View>
           );

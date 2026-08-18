@@ -3,15 +3,17 @@
 // Las partidas son autoritativas: el servidor valida turnos y mueve a los bots.
 
 import { Server, Socket } from 'socket.io';
-import { Db, ajustarSaldo, crearNotificacion, intentarCobrar } from '../db';
+import { Db, ajustarSaldo, crearNotificacion, intentarCobrar, obtenerRacha, registrarResultado } from '../db';
 import { verToken, UsuarioAutenticado } from '../auth';
 import {
   aplicarJugada,
+  fichasPorJugadorPermitidas,
   iniciarPartida,
   obtenerExtremosJugables,
   obtenerFichasJugables,
   obtenerGanadorTrabado,
   pasarTurno,
+  resolverColoresDistintos,
   robarDelPozo,
   verificarPartidaTrabada,
 } from '../game/engine';
@@ -27,14 +29,30 @@ export interface JugadorSala {
   nombre: string;
   color: string;
   esBot: boolean;
+  foto?: string;
 }
 
+export interface MensajeChat {
+  id: number;
+  usuarioId: number;
+  nombre: string;
+  color: string;
+  foto?: string;
+  texto: string;
+  ts: number;
+}
+
+const MAX_MENSAJES_CHAT = 100;
+const CHAT_COOLDOWN_MS = 1200;
+const CHAT_MAX_LONGITUD = 300;
+
 interface Partida {
-  opciones: { robarPozo: boolean };
+  opciones: { robarPozo: boolean; fichasPorJugador: number };
   estado: EstadoPartida;
   jugadores: JugadorSala[]; // alineados por índice con estado.jugadores
   apuesta: number;
   pagada: boolean;
+  humanosInicio: number;
 }
 
 export interface Sala {
@@ -45,6 +63,8 @@ export interface Sala {
   estado: 'espera' | 'jugando';
   humanos: Map<number, JugadorSala>;
   partida: Partida | null;
+  pausa: { jugadorId: number; nombre: string } | null;
+  mensajes: MensajeChat[];
 }
 
 function nuevoCodigo(): string {
@@ -65,6 +85,7 @@ function snapshotSala(sala: Sala) {
       id: j.usuarioId,
       nombre: j.nombre,
       color: j.color,
+      foto: j.foto,
     })),
     partida: sala.partida ? { empezada: true } : null,
   };
@@ -73,6 +94,7 @@ function snapshotSala(sala: Sala) {
 export class SalaManager {
   private salas = new Map<string, Sala>();
   private socketSala = new Map<string, string>(); // socketId -> codigo
+  private ultimoChat = new Map<string, number>(); // socketId -> timestamp último mensaje
 
   constructor(
     private io: Server,
@@ -100,6 +122,8 @@ export class SalaManager {
         estado: fila.estado === 'jugando' ? 'jugando' : 'espera',
         humanos: new Map(),
         partida: null,
+        pausa: null,
+        mensajes: [],
       };
       this.salas.set(codigoUp, sala);
     }
@@ -119,6 +143,7 @@ export class SalaManager {
         nombre: usuario.nombre,
         color: usuario.color,
         esBot: false,
+        foto: usuario.foto ?? undefined,
       });
     }
     // Mantener la pertenencia persistida
@@ -126,15 +151,57 @@ export class SalaManager {
       .prepare('INSERT OR IGNORE INTO sala_jugadores (sala_id, usuario_id, creado_en) VALUES (?, ?, ?)')
       .run(codigoUp, usuario.id, Date.now());
 
+    // Si el anfitrión de una sala en espera no está conectado (p. ej. sala
+    // huérfana de una sesión anterior), el primer jugador presente toma el rol.
+    this.transferirHostSiAplica(sala);
+
+    // Si el jugador abandonado vuelve a conectarse, se reanuda la partida pausada
+    if (sala.pausa && sala.pausa.jugadorId === usuario.id && sala.partida) {
+      sala.pausa = null;
+      this.io.to(codigoUp).emit('partida:reanudada', {});
+      this.emitirEstado(sala);
+      this.avanzar(sala);
+    }
+
     this.emitirSala(sala);
     if (sala.partida) {
       socket.emit('partida:estado', { estado: sala.partida.estado });
     }
+    socket.emit('chat:historial', { mensajes: sala.mensajes });
     return { ok: true };
   }
 
   salir(socket: Socket): void {
     this.salirDeSalaActual(socket);
+  }
+
+  // Refresca el perfil (foto/nombre/color) del usuario en la sala y partida actuales.
+  actualizarPerfil(socket: Socket): void {
+    const codigo = this.socketSala.get(socket.id);
+    const sala = codigo ? this.salas.get(codigo) : undefined;
+    const usuario = socket.data.usuario as UsuarioAutenticado | undefined;
+    if (!sala || !usuario) return;
+    const fila = this.db
+      .prepare('SELECT id, nombre, color, saldo, foto FROM usuarios WHERE id = ?')
+      .get(usuario.id) as { id: number; nombre: string; color: string; saldo: number; foto?: string | null } | undefined;
+    if (!fila) return;
+    const humano = sala.humanos.get(usuario.id);
+    if (humano) {
+      humano.nombre = fila.nombre;
+      humano.color = fila.color;
+      humano.foto = fila.foto ?? undefined;
+    }
+    if (sala.partida) {
+      sala.partida.jugadores.forEach(j => {
+        if (j.usuarioId === usuario.id) {
+          j.nombre = fila.nombre;
+          j.color = fila.color;
+          j.foto = fila.foto ?? undefined;
+        }
+      });
+      this.emitirEstado(sala);
+    }
+    this.emitirSala(sala);
   }
 
   desconectar(socket: Socket): void {
@@ -144,18 +211,52 @@ export class SalaManager {
 
     if (sala && usuario) {
       sala.humanos.delete(usuario.id);
-      // Si la partida está en curso, su asiento pasa a ser un bot que juega solo
-      if (sala.partida) {
-        sala.partida.jugadores.forEach(j => {
-          if (j.usuarioId === usuario.id) j.esBot = true;
-        });
+      if (sala.estado === 'espera' && sala.hostId === usuario.id) {
+        this.transferirHostSiAplica(sala);
       }
-      this.emitirSala(sala);
-      if (sala.humanos.size === 0) {
-        this.salas.delete(codigo!);
+      this.abandonarSiAplica(sala, usuario.id, usuario.nombre);
+      if (sala.humanos.size === 0 && !sala.partida) {
+        this.eliminarSala(codigo!);
       }
     }
     this.socketSala.delete(socket.id);
+  }
+
+  // Cuando un humano deja la partida en curso:
+  // - Si queda otro humano, la partida se pausa y se le notifica (esperar/abandonar).
+  // - Si no queda nadie, la partida se cierra.
+  // - Con varios humanos restantes, su asiento pasa a ser un bot y sigue el juego.
+  private abandonarSiAplica(sala: Sala, jugadorId: number, nombre: string): void {
+    if (!sala.partida || sala.partida.pagada) {
+      this.emitirSala(sala);
+      return;
+    }
+    if (sala.humanos.size === 1) {
+      this.pausarPorAbandono(sala, jugadorId, nombre);
+    } else if (sala.humanos.size === 0) {
+      this.finalizar(sala);
+    } else {
+      sala.partida.jugadores.forEach(j => {
+        if (j.usuarioId === jugadorId) j.esBot = true;
+      });
+      this.emitirSala(sala);
+    }
+  }
+
+  private pausarPorAbandono(sala: Sala, jugadorId: number, nombre: string): void {
+    sala.pausa = { jugadorId, nombre };
+    // Si el anfitrión se va, pasa el host al jugador que se queda
+    if (sala.hostId === jugadorId) {
+      const restante = [...sala.humanos.values()][0];
+      if (restante) {
+        sala.hostId = restante.usuarioId;
+        this.db.prepare('UPDATE salas SET host_id = ? WHERE codigo = ?').run(restante.usuarioId, sala.codigo);
+      }
+    }
+    this.io.to(sala.codigo).emit('partida:jugador_abandono', {
+      jugador: { id: jugadorId, nombre },
+    });
+    this.emitirSala(sala);
   }
 
   private salirDeSalaActual(socket: Socket): void {
@@ -165,15 +266,12 @@ export class SalaManager {
       const usuario = socket.data.usuario as UsuarioAutenticado | undefined;
       if (sala && usuario) {
         sala.humanos.delete(usuario.id);
-        if (sala.partida) {
-          sala.partida.jugadores.forEach(j => {
-            if (j.usuarioId === usuario.id) j.esBot = true;
-          });
+        if (sala.estado === 'espera' && sala.hostId === usuario.id) {
+          this.transferirHostSiAplica(sala);
         }
-        if (sala.humanos.size === 0 && sala.estado === 'espera') {
-          this.salas.delete(previo);
-        } else if (sala.estado === 'espera') {
-          this.emitirSala(sala);
+        this.abandonarSiAplica(sala, usuario.id, usuario.nombre);
+        if (sala.humanos.size === 0 && !sala.partida) {
+          this.eliminarSala(previo);
         }
       }
       socket.leave(previo);
@@ -181,9 +279,31 @@ export class SalaManager {
     }
   }
 
+  // Si el anfitrión de una sala en espera no está entre los conectados,
+  // transfiere el rol al primer jugador presente para que la partida pueda iniciar.
+  private transferirHostSiAplica(sala: Sala): void {
+    if (sala.estado !== 'espera' || sala.partida) return;
+    if (sala.humanos.has(sala.hostId)) return;
+    const restante = [...sala.humanos.values()][0];
+    if (!restante) return;
+    sala.hostId = restante.usuarioId;
+    this.db.prepare('UPDATE salas SET host_id = ? WHERE codigo = ?').run(restante.usuarioId, sala.codigo);
+    this.emitirSala(sala);
+  }
+
+  private eliminarSala(codigo: string): void {
+    this.salas.delete(codigo);
+    this.db.prepare('DELETE FROM salas WHERE codigo = ?').run(codigo);
+  }
+
   // ---------- Empezar partida ----------
 
-  empezar(socket: Socket, codigo: string, robarPozo: boolean): { ok: boolean; error?: string } {
+  empezar(
+    socket: Socket,
+    codigo: string,
+    robarPozo: boolean,
+    fichasPorJugador: number,
+  ): { ok: boolean; error?: string } {
     const usuario = socket.data.usuario as UsuarioAutenticado;
     const sala = this.salas.get(codigo.toUpperCase());
     if (!sala) return { ok: false, error: 'sala_no_encontrada' };
@@ -205,6 +325,9 @@ export class SalaManager {
       });
     }
 
+    const permitidas = fichasPorJugadorPermitidas(total);
+    const fichas = permitidas.includes(fichasPorJugador) ? fichasPorJugador : 7;
+
     // Cobrar apuestas (solo humanos)
     const apuesta = sala.apuesta;
     const cobrados: number[] = [];
@@ -220,14 +343,30 @@ export class SalaManager {
       }
     }
 
-    const estado = iniciarPartida(jugadores.map(j => j.nombre), { robarPozo });
+    const coloresResueltos = resolverColoresDistintos(jugadores.map(j => j.color));
+    jugadores.forEach((j, i) => {
+      j.color = coloresResueltos?.[i] ?? j.color;
+    });
+    const estado = iniciarPartida(
+      jugadores.map(j => j.nombre),
+      { robarPozo, fichasPorJugador: fichas },
+      jugadores.map(j => j.color),
+    );
+    // Adjuntar la racha, la foto y el color de cada jugador humano (los bots van a 0 / sin foto)
+    estado.jugadores.forEach((j, i) => {
+      j.racha = jugadores[i].esBot ? 0 : obtenerRacha(this.db, jugadores[i].usuarioId);
+      j.foto = jugadores[i].foto;
+      j.color = jugadores[i].color;
+    });
     sala.partida = {
-      opciones: { robarPozo },
+      opciones: { robarPozo, fichasPorJugador: fichas },
       estado,
       jugadores,
       apuesta,
       pagada: false,
+      humanosInicio: humanos.length,
     };
+    sala.pausa = null;
     sala.estado = 'jugando';
     this.db.prepare("UPDATE salas SET estado = 'jugando' WHERE codigo = ?").run(sala.codigo);
 
@@ -238,6 +377,8 @@ export class SalaManager {
         color: j.color,
         esBot: j.esBot,
         orden: i,
+        racha: j.esBot ? 0 : obtenerRacha(this.db, j.usuarioId),
+        foto: j.foto,
       })),
       opciones: sala.partida.opciones,
       apuesta,
@@ -320,6 +461,90 @@ export class SalaManager {
     return { ok: true };
   }
 
+  // ---------- Chat de la sala ----------
+
+  chat(socket: Socket, codigo: string, texto: string): { ok: boolean; error?: string } {
+    const usuario = socket.data.usuario as UsuarioAutenticado;
+    const sala = this.salas.get(codigo.toUpperCase());
+    if (!sala) return { ok: false, error: 'sala_no_encontrada' };
+    if (!sala.humanos.has(usuario.id)) return { ok: false, error: 'no_estas_en_la_sala' };
+
+    const limpio = String(texto ?? '').trim();
+    if (!limpio || limpio.length > CHAT_MAX_LONGITUD) return { ok: false, error: 'mensaje_invalido' };
+
+    const ahora = Date.now();
+    const ultimo = this.ultimoChat.get(socket.id);
+    if (ultimo && ahora - ultimo < CHAT_COOLDOWN_MS) return { ok: false, error: 'chat_demasiado_rapido' };
+    this.ultimoChat.set(socket.id, ahora);
+
+    const mensaje: MensajeChat = {
+      id: (sala.mensajes[sala.mensajes.length - 1]?.id ?? 0) + 1,
+      usuarioId: usuario.id,
+      nombre: usuario.nombre,
+      color: usuario.color,
+      foto: usuario.foto ?? undefined,
+      texto: limpio,
+      ts: ahora,
+    };
+    sala.mensajes.push(mensaje);
+    if (sala.mensajes.length > MAX_MENSAJES_CHAT) {
+      sala.mensajes.splice(0, sala.mensajes.length - MAX_MENSAJES_CHAT);
+    }
+    this.io.to(sala.codigo).emit('chat:mensaje', { mensaje });
+    return { ok: true };
+  }
+
+  // ---------- Pausa por abandono ----------
+
+  esperar(socket: Socket, codigo: string): { ok: boolean; error?: string } {
+    const usuario = socket.data.usuario as UsuarioAutenticado;
+    const sala = this.salas.get(codigo.toUpperCase());
+    if (!sala?.partida) return { ok: false, error: 'sin_partida' };
+    if (!sala.pausa) return { ok: false, error: 'sin_abandono' };
+    if (!sala.humanos.has(usuario.id)) return { ok: false, error: 'no_estas_en_la_partida' };
+    // El jugador elige esperar: la partida queda pausada hasta que vuelva el rival.
+    return { ok: true };
+  }
+
+  abandonarPartida(socket: Socket, codigo: string): { ok: boolean; error?: string } {
+    const usuario = socket.data.usuario as UsuarioAutenticado;
+    const sala = this.salas.get(codigo.toUpperCase());
+    const partida = sala?.partida;
+    if (!sala || !partida || partida.pagada) return { ok: false, error: 'sin_partida' };
+    if (!sala.humanos.has(usuario.id)) return { ok: false, error: 'no_estas_en_la_partida' };
+
+    partida.pagada = true;
+    const apuesta = partida.apuesta;
+    const pot = apuesta * partida.humanosInicio;
+
+    // Estadísticas: el que se queda gana; quien abandonó pierde y corta su racha
+    registrarResultado(this.db, usuario.id, 'victoria');
+    if (sala.pausa) registrarResultado(this.db, sala.pausa.jugadorId, 'derrota');
+
+    const pagos: Record<number, { tipo: 'ganancia' | 'reembolso' | 'perdida'; monto: number }> = {};
+    if (apuesta > 0) {
+      // El que se queda gana el pozo: el rival abandonó la partida
+      ajustarSaldo(this.db, usuario.id, pot, 'ganancia', 'Premio por abandono del rival');
+      crearNotificacion(this.db, usuario.id, 'Victoria', `Ganaste ${pot} créditos`);
+      pagos[usuario.id] = { tipo: 'ganancia', monto: pot };
+    }
+
+    this.io.to(sala.codigo).emit('partida:terminada', {
+      estado: partida.estado,
+      apuesta,
+      pot,
+      pagos,
+      motivo: 'abandono',
+    });
+
+    sala.partida = null;
+    sala.pausa = null;
+    sala.estado = 'espera';
+    this.db.prepare("UPDATE salas SET estado = 'espera' WHERE codigo = ?").run(sala.codigo);
+    this.emitirSala(sala);
+    return { ok: true };
+  }
+
   // ---------- Internos ----------
 
   private emitirSala(sala: Sala): void {
@@ -334,7 +559,7 @@ export class SalaManager {
   // Avanza turnos: auto-pase, bots y finalización
   private avanzar(sala: Sala): void {
     const partida = sala.partida;
-    if (!partida || partida.pagada) return;
+    if (!partida || partida.pagada || sala.pausa) return;
     let estado = partida.estado;
 
     // Auto-pase de jugadores que no pueden jugar ni robar
@@ -393,6 +618,13 @@ export class SalaManager {
     if (!partida || partida.pagada) return;
     partida.pagada = true;
 
+    // Partida trabada: se cierra y gana quien tenga menos puntos en la mano
+    const estadoInicial = partida.estado;
+    if (verificarPartidaTrabada(estadoInicial)) {
+      const ganadorTrabado = obtenerGanadorTrabado(estadoInicial);
+      partida.estado = { ...estadoInicial, partidaTrabada: true, ganador: ganadorTrabado };
+    }
+
     const humanos = partida.jugadores.filter(j => !j.esBot);
     const apuesta = partida.apuesta;
     const pot = apuesta * humanos.length;
@@ -400,11 +632,22 @@ export class SalaManager {
     // Resultado por jugador humano (para mostrarlo en cada cliente)
     const pagos: Record<number, { tipo: 'ganancia' | 'reembolso' | 'perdida'; monto: number }> = {};
 
-    if (apuesta > 0 && humanos.length > 0) {
-      const estado = partida.estado;
-      const ganadorIdx = estado.ganador ? parseInt(estado.ganador.replace('jugador-', ''), 10) : -1;
-      const ganador = Number.isInteger(ganadorIdx) ? partida.jugadores[ganadorIdx] : undefined;
+    const estado = partida.estado;
+    const ganadorIdx = estado.ganador ? parseInt(estado.ganador.replace('jugador-', ''), 10) : -1;
+    const ganador = Number.isInteger(ganadorIdx) ? partida.jugadores[ganadorIdx] : undefined;
 
+    // Estadísticas (victoria/derrota/racha) independientemente de la apuesta
+    if (ganador && !ganador.esBot) {
+      registrarResultado(this.db, ganador.usuarioId, 'victoria');
+      for (const h of humanos) {
+        if (h.usuarioId !== ganador.usuarioId) registrarResultado(this.db, h.usuarioId, 'derrota');
+      }
+    } else if (ganador && ganador.esBot) {
+      // Ganó un bot: los humanos pierden
+      for (const h of humanos) registrarResultado(this.db, h.usuarioId, 'derrota');
+    }
+
+    if (apuesta > 0 && humanos.length > 0) {
       if (ganador && !ganador.esBot) {
         ajustarSaldo(this.db, ganador.usuarioId, pot, 'ganancia', 'Premio de la partida');
         crearNotificacion(this.db, ganador.usuarioId, 'Victoria', `Ganaste ${pot} créditos`);
@@ -426,6 +669,7 @@ export class SalaManager {
     this.io.to(sala.codigo).emit('partida:terminada', { estado: partida.estado, apuesta, pot, pagos });
 
     sala.partida = null;
+    sala.pausa = null;
     sala.estado = 'espera';
     this.db.prepare("UPDATE salas SET estado = 'espera' WHERE codigo = ?").run(sala.codigo);
     this.emitirSala(sala);
@@ -441,8 +685,8 @@ export function registrarSockets(io: Server, db: Db): SalaManager {
       next(new Error('no_autenticado'));
       return;
     }
-    const fila = db.prepare('SELECT id, nombre, color, saldo FROM usuarios WHERE id = ?').get(datos.uid) as
-      | { id: number; nombre: string; color: string; saldo: number }
+    const fila = db.prepare('SELECT id, nombre, color, saldo, foto FROM usuarios WHERE id = ?').get(datos.uid) as
+      | { id: number; nombre: string; color: string; saldo: number; foto?: string | null }
       | undefined;
     if (!fila) {
       next(new Error('usuario_no_existe'));
@@ -462,8 +706,15 @@ export function registrarSockets(io: Server, db: Db): SalaManager {
 
     socket.on('sala:salir', () => manager.salir(socket));
 
-    socket.on('sala:empezar', (payload: { codigo: string; robarPozo?: boolean }) => {
-      const res = manager.empezar(socket, String(payload?.codigo ?? ''), payload?.robarPozo !== false);
+    socket.on('sala:actualizar_perfil', () => manager.actualizarPerfil(socket));
+
+    socket.on('sala:empezar', (payload: { codigo: string; robarPozo?: boolean; fichasPorJugador?: number }) => {
+      const res = manager.empezar(
+        socket,
+        String(payload?.codigo ?? ''),
+        payload?.robarPozo !== false,
+        Number(payload?.fichasPorJugador ?? 7),
+      );
       if (!res.ok) socket.emit('sala:error', { error: res.error });
     });
 
@@ -480,6 +731,21 @@ export function registrarSockets(io: Server, db: Db): SalaManager {
     socket.on('partida:pasar', (payload: { codigo: string }) => {
       const res = manager.pasar(socket, String(payload?.codigo ?? ''));
       if (!res.ok) socket.emit('sala:error', { error: res.error });
+    });
+
+    socket.on('partida:esperar', (payload: { codigo: string }) => {
+      const res = manager.esperar(socket, String(payload?.codigo ?? ''));
+      if (!res.ok) socket.emit('sala:error', { error: res.error });
+    });
+
+    socket.on('partida:abandonar', (payload: { codigo: string }) => {
+      const res = manager.abandonarPartida(socket, String(payload?.codigo ?? ''));
+      if (!res.ok) socket.emit('sala:error', { error: res.error });
+    });
+
+    socket.on('chat:enviar', (payload: { codigo: string; texto: string }) => {
+      const res = manager.chat(socket, String(payload?.codigo ?? ''), String(payload?.texto ?? ''));
+      if (!res.ok) socket.emit('chat:error', { error: res.error });
     });
 
     socket.on('disconnect', () => manager.desconectar(socket));

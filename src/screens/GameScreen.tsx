@@ -11,9 +11,12 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Asiento } from '../components/Asiento';
+import { Avatar } from '../components/Avatar';
 import { Board } from '../components/Board';
+import { ChatSala } from '../components/ChatSala';
 import { DragTile } from '../components/DragTile';
 import { Tile } from '../components/Tile';
+import { IconoChat } from '../components/icons/IconoChat';
 import { IconoDado } from '../components/icons/IconoDado';
 import { IconoEngranaje } from '../components/icons/IconoEngranaje';
 import { IconoFlecha } from '../components/icons/IconoFlecha';
@@ -24,6 +27,7 @@ import { IconoReiniciar } from '../components/icons/IconoReiniciar';
 import { IconoSalir } from '../components/icons/IconoSalir';
 import { dimensionesFicha, LayoutResultado, paddingFicha } from '../components/layoutTablero';
 import { obtenerExtremosJugables, obtenerFichasJugables, calcularPuntaje } from '../game/engine';
+import { fichasPorJugadorPermitidas } from '../constants/gameConfig';
 import { Ficha, Jugador } from '../game/types';
 import { FONT_INTER_MEDIUM, FONT_INTER_SEMIBOLD, FONT_MONTSERRAT_EXTRA } from '../constants/fonts';
 import { useT } from '../i18n/useT';
@@ -31,6 +35,7 @@ import { Traducciones } from '../i18n/traducciones';
 import { useAppStore } from '../store/appStore';
 import { useGameStore } from '../store/gameStore';
 import { useOnlineStore } from '../store/onlineStore';
+import { apiAgregarAmigo, apiEliminarAmigo, ErrorApi } from '../services/api';
 
 const COLORES_JUGADORES = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626'];
 const COLOR_MENTA = '#6FFBBE';
@@ -50,6 +55,8 @@ export function GameScreen({ modo = 'local' }: { modo?: 'local' | 'online' }) {
   const animarTurno = useAppStore(s => s.ajustes.animarTurno);
   const abrirAjustes = useAppStore(s => s.abrirAjustes);
   const volverAtras = useAppStore(s => s.volverAtras);
+  const notificar = useAppStore(s => s.notificar);
+  const amigos = useAppStore(s => s.amigos);
   const online = modo === 'online';
 
   const faseLocal = useGameStore(s => s.fase);
@@ -67,6 +74,9 @@ export function GameScreen({ modo = 'local' }: { modo?: 'local' | 'online' }) {
 
   const onlineStore = useOnlineStore();
 
+  const abandono = onlineStore.abandono;
+  const esperando = onlineStore.esperando;
+
   const fase = online ? onlineStore.fase : faseLocal;
   const estado = online ? onlineStore.estado : estadoLocal;
   const mensaje = online ? onlineStore.mensaje : mensajeLocal;
@@ -79,6 +89,9 @@ export function GameScreen({ modo = 'local' }: { modo?: 'local' | 'online' }) {
   const [fichaSeleccionada, setFichaSeleccionada] = useState<string | null>(null);
   const [arrastrando, setArrastrando] = useState<Ficha | null>(null);
   const [layout, setLayout] = useState<LayoutResultado | null>(null);
+  const [menuJugador, setMenuJugador] = useState<Jugador | null>(null);
+  const [verPerfil, setVerPerfil] = useState<Jugador | null>(null);
+  const [chatAbierto, setChatAbierto] = useState(false);
 
   const posicionArrastre = useRef(new Animated.ValueXY()).current;
   const rectoTablero = useRef<Rect | null>(null);
@@ -100,8 +113,12 @@ export function GameScreen({ modo = 'local' }: { modo?: 'local' | 'online' }) {
     setArrastrando(null);
   }, [estado]);
 
-  if (online && onlineStore.fase === 'espera') {
-    return <SalaEspera />;
+  if (online) {
+    // Mientras no haya partida (conectando, uniéndose o error de sala) se
+    // muestra la pantalla de espera en lugar de una pantalla en blanco.
+    if (onlineStore.fase === 'espera' || !estado) {
+      return <SalaEspera />;
+    }
   }
 
   if (!estado) return null;
@@ -123,7 +140,7 @@ export function GameScreen({ modo = 'local' }: { modo?: 'local' | 'online' }) {
   });
 
   const colorDe = (j: Jugador) =>
-    COLORES_JUGADORES[estado.jugadores.findIndex(p => p.id === j.id) % COLORES_JUGADORES.length];
+    j.color ?? COLORES_JUGADORES[estado.jugadores.findIndex(p => p.id === j.id) % COLORES_JUGADORES.length];
   const asientoActivo = (j: Jugador) => j.id === jugadorActual.id && fase === 'jugando';
 
   const esTurnoInferior = jugadorActual.id === jugadorInferior.id;
@@ -147,6 +164,55 @@ export function GameScreen({ modo = 'local' }: { modo?: 'local' | 'online' }) {
       reiniciar();
     }
     volverAtras();
+  };
+
+  const abrirMenuJugador = (j: Jugador) => setMenuJugador(j);
+
+  const cerrarMenu = () => setMenuJugador(null);
+
+  const agregarAmigo = async (j: Jugador) => {
+    if (j.esBot) {
+      notificar(t('amigos'), t('soloJugadores'));
+      return;
+    }
+    if (!online) {
+      notificar(t('amigos'), t('sinConexion'));
+      return;
+    }
+    try {
+      const r = await apiAgregarAmigo(j.nombre);
+      useAppStore.setState({ amigos: r.amigos.map(a => a.nombre) });
+      notificar(t('amigos'), t('amigoAgregado'));
+    } catch (err) {
+      const codigo = err instanceof ErrorApi ? err.codigo : '';
+      notificar(
+        t('amigos'),
+        codigo === 'no_puedes_agregarte'
+          ? t('noTePuedesAgregar')
+          : codigo === 'ya_es_amigo'
+            ? t('amigoYaExiste')
+            : t('sinConexion'),
+      );
+    }
+  };
+
+  const agregarAmigoDesdeMenu = (j: Jugador) => {
+    cerrarMenu();
+    void agregarAmigo(j);
+  };
+
+  const eliminarAmigoDesdePerfil = async (j: Jugador) => {
+    if (!online) {
+      notificar(t('amigos'), t('sinConexion'));
+      return;
+    }
+    try {
+      const r = await apiEliminarAmigo(j.nombre);
+      useAppStore.setState({ amigos: r.amigos.map(a => a.nombre) });
+      notificar(t('amigos'), t('amigoEliminado'));
+    } catch {
+      notificar(t('amigos'), t('sinConexion'));
+    }
   };
 
   const medirZonaTablero = () => {
@@ -257,6 +323,11 @@ export function GameScreen({ modo = 'local' }: { modo?: 'local' | 'online' }) {
         <Pressable style={styles.botonSalir} onPress={abandonar}>
           <IconoSalir color="#ffb4b4" size={20} />
         </Pressable>
+        {online && (
+          <Pressable style={styles.botonChat} onPress={() => setChatAbierto(true)}>
+            <IconoChat color={COLOR_MENTA} size={20} />
+          </Pressable>
+        )}
         <Pressable style={styles.botonAjustes} onPress={abrirAjustes}>
           <IconoEngranaje color="#ffffff" size={20} />
         </Pressable>
@@ -264,29 +335,41 @@ export function GameScreen({ modo = 'local' }: { modo?: 'local' | 'online' }) {
 
       {mensaje ? <Text style={styles.mensaje}>{mensaje}</Text> : null}
 
+      {online && esperando && abandono ? (
+        <View style={styles.bannerEspera}>
+          <Text style={styles.textoBannerEspera}>
+            {t('esperandoJugador', { name: abandono.nombre })}
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.asientosSuperior}>
         {asientos.superior && (
-          <Asiento
-            jugador={asientos.superior}
-            color={colorDe(asientos.superior)}
-            activo={asientoActivo(asientos.superior)}
-            pensando={asientoActivo(asientos.superior) && asientos.superior.esBot}
-            soloAvatar
-          />
+          <Pressable onPress={() => abrirMenuJugador(asientos.superior!)}>
+            <Asiento
+              jugador={asientos.superior}
+              color={colorDe(asientos.superior)}
+              activo={asientoActivo(asientos.superior)}
+              pensando={asientoActivo(asientos.superior) && asientos.superior.esBot}
+              soloAvatar
+            />
+          </Pressable>
         )}
       </View>
 
       <View style={styles.filaCentral}>
         {asientos.izquierdo && (
           <View style={styles.asientoLateral}>
-            <Asiento
-              jugador={asientos.izquierdo}
-              color={colorDe(asientos.izquierdo)}
-              activo={asientoActivo(asientos.izquierdo)}
-              pensando={asientoActivo(asientos.izquierdo) && asientos.izquierdo.esBot}
-              orientacion="vertical"
-              soloAvatar
-            />
+            <Pressable onPress={() => abrirMenuJugador(asientos.izquierdo!)}>
+              <Asiento
+                jugador={asientos.izquierdo}
+                color={colorDe(asientos.izquierdo)}
+                activo={asientoActivo(asientos.izquierdo)}
+                pensando={asientoActivo(asientos.izquierdo) && asientos.izquierdo.esBot}
+                orientacion="vertical"
+                soloAvatar
+              />
+            </Pressable>
           </View>
         )}
 
@@ -344,14 +427,16 @@ export function GameScreen({ modo = 'local' }: { modo?: 'local' | 'online' }) {
 
         {asientos.derecho && (
           <View style={styles.asientoLateral}>
-            <Asiento
-              jugador={asientos.derecho}
-              color={colorDe(asientos.derecho)}
-              activo={asientoActivo(asientos.derecho)}
-              pensando={asientoActivo(asientos.derecho) && asientos.derecho.esBot}
-              orientacion="vertical"
-              soloAvatar
-            />
+            <Pressable onPress={() => abrirMenuJugador(asientos.derecho!)}>
+              <Asiento
+                jugador={asientos.derecho}
+                color={colorDe(asientos.derecho)}
+                activo={asientoActivo(asientos.derecho)}
+                pensando={asientoActivo(asientos.derecho) && asientos.derecho.esBot}
+                orientacion="vertical"
+                soloAvatar
+              />
+            </Pressable>
           </View>
         )}
       </View>
@@ -383,9 +468,15 @@ export function GameScreen({ modo = 'local' }: { modo?: 'local' | 'online' }) {
         style={styles.bandejaInferior}
       >
         <View style={styles.cabeceraBandeja}>
-          <View style={[styles.avatarBandeja, { backgroundColor: colorDe(jugadorInferior) }]}>
-            <IconoJugador color="#ffffff" size={20} />
-          </View>
+          <Pressable onPress={() => abrirMenuJugador(jugadorInferior)}>
+            <Avatar
+              foto={jugadorInferior.foto}
+              color={colorDe(jugadorInferior)}
+              nombre={jugadorInferior.nombre}
+              tamano={32}
+              estilo={styles.avatarBandeja}
+            />
+          </Pressable>
           <Text
             style={[
               styles.nombreInferior,
@@ -432,6 +523,7 @@ export function GameScreen({ modo = 'local' }: { modo?: 'local' | 'online' }) {
                   jugable={esJugable}
                   oculta={arrastrando?.id === f.id}
                   deshabilitada={!habilitarArrastre}
+                  color={jugadorInferior.color}
                   onPress={() => tocarFicha(f)}
                   onDragInicio={(x, y) => iniciarArrastre(f, x, y)}
                   onDragMover={moverArrastre}
@@ -453,29 +545,41 @@ export function GameScreen({ modo = 'local' }: { modo?: 'local' | 'online' }) {
             { transform: [...posicionArrastre.getTranslateTransform(), { scale: 1.1 }] },
           ]}
         >
-          <Tile valores={[arrastrando.lado1, arrastrando.lado2]} size={tamanoMano} />
+          <Tile valores={[arrastrando.lado1, arrastrando.lado2]} size={tamanoMano} color={jugadorInferior.color} />
         </Animated.View>
       )}
 
       <Modal visible={fase === 'terminado'} transparent animationType="fade">
         <View style={styles.fondoModal}>
           <View style={styles.modal}>
-            <Text style={styles.tituloFinal}>
-              {ganador ? t('gana', { name: ganador.nombre }) : t('empatada')}
-            </Text>
-            {estado.partidaTrabada && <Text style={styles.subtituloFinal}>{t('trabada')}</Text>}
+            {online && onlineStore.terminadaPorAbandono ? (
+              <>
+                <Text style={styles.tituloFinal}>{t('partidaAbandonada')}</Text>
+                <Text style={styles.subtituloFinal}>{t('rivalAbandono')}</Text>
+              </>
+            ) : estado.partidaTrabada ? (
+              <>
+                <Text style={styles.tituloFinal}>{t('juegoCerrado')}</Text>
+                <Text style={styles.subtituloFinal}>
+                  {ganador ? t('ganadorEs', { name: ganador.nombre }) : t('empatada')}
+                </Text>
+              </>
+            ) : (
+              <Text style={styles.tituloFinal}>
+                {ganador ? t('gana', { name: ganador.nombre }) : t('empatada')}
+              </Text>
+            )}
             <View style={styles.tablaPuntos}>
               {estado.jugadores.map((j, indice) => (
                 <View key={j.id} style={styles.filaPuntos}>
                   <View style={styles.filaNombreFinal}>
-                    <View
-                      style={[
-                        styles.avatarFinal,
-                        { backgroundColor: COLORES_JUGADORES[indice % COLORES_JUGADORES.length] },
-                      ]}
-                    >
-                      <IconoJugador color="#ffffff" size={16} />
-                    </View>
+                    <Avatar
+                      foto={j.foto}
+                      color={j.color ?? COLORES_JUGADORES[indice % COLORES_JUGADORES.length]}
+                      nombre={j.nombre}
+                      tamano={28}
+                      estilo={styles.avatarFinal}
+                    />
                     <Text style={styles.nombreFinal}>{j.nombre}</Text>
                   </View>
                   <Text style={styles.valorPuntos}>
@@ -500,7 +604,9 @@ export function GameScreen({ modo = 'local' }: { modo?: 'local' | 'online' }) {
               onPress={() => (online ? onlineStore.empezar() : iniciar(config, opciones))}
             >
               <IconoReiniciar size={20} color="#002113" />
-              <Text style={styles.textoFinal}>{t('jugarDeNuevo')}</Text>
+              <Text style={styles.textoFinal}>
+                {online ? t('jugarOtraPartida') : t('jugarDeNuevo')}
+              </Text>
             </Pressable>
             <Pressable
               style={({ pressed }) => [styles.botonFinal, styles.botonSecundario, pressed && styles.botonPresionado]}
@@ -515,12 +621,129 @@ export function GameScreen({ modo = 'local' }: { modo?: 'local' | 'online' }) {
             >
               <IconoJugador color="#ffffff" size={20} />
               <Text style={[styles.textoFinal, styles.textoSecundario]}>
-                {t('cambiarJugadores')}
+                {online ? t('salirSala') : t('cambiarJugadores')}
               </Text>
             </Pressable>
           </View>
         </View>
       </Modal>
+
+      <Modal visible={menuJugador !== null} transparent animationType="fade" onRequestClose={cerrarMenu}>
+        <View style={styles.fondoModal}>
+          <View style={styles.tarjetaModal}>
+            <Text style={styles.tituloModal}>{t('perfilJugador')}</Text>
+            <Text style={styles.nombreModal}>{menuJugador?.nombre}</Text>
+            <Pressable
+              style={({ pressed }) => [styles.botonModal, pressed && styles.botonPresionado]}
+              onPress={() => {
+                const j = menuJugador;
+                cerrarMenu();
+                if (j) setVerPerfil(j);
+              }}
+            >
+              <Text style={styles.textoModal}>{t('perfilJugador')}</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.botonModal, styles.botonModalPrimario, pressed && styles.botonPresionado]}
+              onPress={() => menuJugador && agregarAmigoDesdeMenu(menuJugador)}
+            >
+              <Text style={[styles.textoModal, styles.textoModalPrimario]}>{t('agregarAmigo')}</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.botonModal, pressed && styles.botonPresionado]}
+              onPress={cerrarMenu}
+            >
+              <Text style={[styles.textoModal, styles.textoCancelar]}>{t('cancelar')}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={verPerfil !== null} transparent animationType="fade" onRequestClose={() => setVerPerfil(null)}>
+        <View style={styles.fondoModal}>
+          <View style={styles.tarjetaModal}>
+            <Avatar
+              foto={verPerfil?.foto}
+              color={verPerfil ? colorDe(verPerfil) : '#555'}
+              nombre={verPerfil?.nombre}
+              tamano={64}
+              estilo={styles.avatarPerfil}
+            />
+            <Text style={styles.tituloModal}>{verPerfil?.nombre}</Text>
+            <View style={styles.detallePerfil}>
+              <Text style={styles.detalleEtiqueta}>{t('racha')}</Text>
+              <Text style={styles.detalleValor}>{verPerfil?.racha ?? 0}</Text>
+            </View>
+            <View style={styles.detallePerfil}>
+              <Text style={styles.detalleEtiqueta}>{t('fichasEnMano')}</Text>
+              <Text style={styles.detalleValor}>{verPerfil ? verPerfil.mano.length : 0}</Text>
+            </View>
+            <View style={styles.detallePerfil}>
+              <Text style={styles.detalleEtiqueta}>{t('puntos')}</Text>
+              <Text style={styles.detalleValor}>
+                {verPerfil ? calcularPuntaje(verPerfil.mano) : 0}
+              </Text>
+            </View>
+            {online &&
+            verPerfil &&
+            !verPerfil.esBot &&
+            verPerfil.nombre !== useAppStore.getState().perfil?.nombre ? (
+              amigos.includes(verPerfil.nombre) ? (
+                <Pressable
+                  style={({ pressed }) => [styles.botonModal, styles.botonModalEliminar, pressed && styles.botonPresionado]}
+                  onPress={() => eliminarAmigoDesdePerfil(verPerfil)}
+                >
+                  <Text style={[styles.textoModal, styles.textoModalEliminar]}>{t('eliminarDeAmigos')}</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={({ pressed }) => [styles.botonModal, styles.botonModalPrimario, pressed && styles.botonPresionado]}
+                  onPress={() => agregarAmigo(verPerfil)}
+                >
+                  <Text style={[styles.textoModal, styles.textoModalPrimario]}>{t('agregarAmigo')}</Text>
+                </Pressable>
+              )
+            ) : null}
+            <Pressable
+              style={({ pressed }) => [styles.botonModal, pressed && styles.botonPresionado]}
+              onPress={() => setVerPerfil(null)}
+            >
+              <Text style={[styles.textoModal, styles.textoCerrar]}>{t('cerrar')}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={online && !!onlineStore.abandono && !onlineStore.esperando}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {}}
+      >
+        <View style={styles.fondoModal}>
+          <View style={styles.tarjetaModal}>
+            <Text style={styles.tituloModal}>
+              {onlineStore.abandono ? t('jugadorAbandono', { name: onlineStore.abandono.nombre }) : ''}
+            </Text>
+            <Pressable
+              style={({ pressed }) => [styles.botonModal, styles.botonModalPrimario, pressed && styles.botonPresionado]}
+              onPress={onlineStore.esperar}
+            >
+              <Text style={[styles.textoModal, styles.textoModalPrimario]}>
+                {onlineStore.abandono ? t('esperarJugador', { name: onlineStore.abandono.nombre }) : ''}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.botonModal, pressed && styles.botonPresionado]}
+              onPress={onlineStore.abandonarPartida}
+            >
+              <Text style={styles.textoModal}>{t('abandonarPartida')}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <ChatSala visible={chatAbierto} onCerrar={() => setChatAbierto(false)} />
     </View>
   );
 }
@@ -547,12 +770,17 @@ function SalaEspera() {
   const sala = useOnlineStore(s => s.sala);
   const esHost = useOnlineStore(s => s.esHost);
   const robarPozo = useOnlineStore(s => s.robarPozo);
+  const fichasPorJugador = useOnlineStore(s => s.fichasPorJugador);
   const conectado = useOnlineStore(s => s.conectado);
   const mensaje = useOnlineStore(s => s.mensaje);
   const set = useOnlineStore.setState;
   const empezar = useOnlineStore(s => s.empezar);
   const salirSala = useOnlineStore(s => s.salirSala);
   const desconectar = useOnlineStore(s => s.desconectar);
+
+  const [chatAbierto, setChatAbierto] = useState(false);
+
+  const fichasValidas = fichasPorJugadorPermitidas(sala?.jugadores.length ?? 2);
 
   const salir = () => {
     salirSala();
@@ -569,6 +797,9 @@ function SalaEspera() {
             <Text style={styles.codigoEspera}>{sala?.codigo ?? '—'}</Text>
           </View>
         </View>
+        <Pressable style={styles.botonChat} onPress={() => setChatAbierto(true)}>
+          <IconoChat color={COLOR_MENTA} size={20} />
+        </Pressable>
         <Pressable style={styles.botonAjustes} onPress={salir}>
           <IconoSalir size={20} color="#ffffff" />
         </Pressable>
@@ -583,7 +814,7 @@ function SalaEspera() {
           <Text style={styles.esperaSubtitulo}>{t('jugadores')}</Text>
           {sala?.jugadores.map(j => (
             <View key={j.id} style={styles.filaJugador}>
-              <View style={[styles.avatarJugador, { backgroundColor: j.color }]} />
+              <Avatar foto={j.foto} color={j.color} nombre={j.nombre} tamano={26} estilo={styles.avatarJugador} />
               <Text style={styles.nombreJugador}>
                 {j.nombre}
                 {j.id === sala.hostId ? ` (${t('anfitrion')})` : ''}
@@ -608,6 +839,27 @@ function SalaEspera() {
                   thumbColor="#ffffff"
                 />
               </View>
+              <View style={styles.filaToggle}>
+                <Text style={styles.textoToggle}>{t('fichasPorJugador')}</Text>
+                <View style={styles.filaFichasEspera}>
+                  {fichasValidas.map(n => (
+                    <Pressable
+                      key={n}
+                      style={[styles.chipFichasEspera, fichasPorJugador === n && styles.chipFichasEsperaActivo]}
+                      onPress={() => set({ fichasPorJugador: n })}
+                    >
+                      <Text
+                        style={[
+                          styles.textoChipEspera,
+                          fichasPorJugador === n && styles.textoChipEsperaActivo,
+                        ]}
+                      >
+                        {n}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
               <Pressable
                 style={({ pressed }) => [styles.botonEmpezar, pressed && styles.botonPresionado]}
                 onPress={empezar}
@@ -621,6 +873,8 @@ function SalaEspera() {
           )}
         </View>
       </View>
+
+      <ChatSala visible={chatAbierto} onCerrar={() => setChatAbierto(false)} />
     </View>
   );
 }
@@ -726,6 +980,17 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,107,107,0.35)',
     marginRight: 8,
   },
+  botonChat: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(111,251,190,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(111,251,190,0.4)',
+    marginRight: 8,
+  },
   mensaje: {
     backgroundColor: 'rgba(0,0,0,0.35)',
     color: COLOR_MENTA,
@@ -737,6 +1002,25 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     borderRadius: 12,
     textAlign: 'center',
+  },
+  bannerEspera: {
+    position: 'absolute',
+    top: 70,
+    left: 24,
+    right: 24,
+    backgroundColor: 'rgba(245,158,11,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.5)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    zIndex: 20,
+  },
+  textoBannerEspera: {
+    color: COLOR_AMBAR,
+    fontSize: 14,
+    fontWeight: '700',
   },
   asientosSuperior: {
     alignItems: 'center',
@@ -969,6 +1253,96 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     elevation: 10,
   },
+  tarjetaModal: {
+    backgroundColor: '#0A4A33',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(111,251,190,0.3)',
+    padding: 24,
+    width: '100%',
+    maxWidth: 380,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
+  },
+  tituloModal: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#ffffff',
+    textAlign: 'center',
+    fontFamily: FONT_MONTSERRAT_EXTRA,
+    letterSpacing: 0.5,
+  },
+  nombreModal: {
+    fontSize: 16,
+    color: COLOR_MENTA,
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  avatarPerfil: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  detallePerfil: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    marginTop: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+  },
+  detalleEtiqueta: {
+    fontSize: 14,
+    color: '#d1d5db',
+    fontWeight: '600',
+  },
+  detalleValor: {
+    fontSize: 15,
+    color: COLOR_MENTA,
+    fontWeight: '700',
+  },
+  botonModal: {
+    width: '100%',
+    alignItems: 'center',
+    marginTop: 10,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+  },
+  botonModalPrimario: {
+    backgroundColor: COLOR_MENTA,
+    borderColor: COLOR_MENTA,
+  },
+  botonModalEliminar: {
+    backgroundColor: 'rgba(255,107,107,0.12)',
+    borderColor: 'rgba(255,107,107,0.4)',
+  },
+  textoModal: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  textoModalPrimario: {
+    color: '#002113',
+  },
+  textoModalEliminar: {
+    color: '#ff6b6b',
+  },
+  textoCerrar: {
+    color: '#94a3b8',
+  },
   tituloFinal: {
     fontSize: 22,
     fontWeight: '800',
@@ -1139,6 +1513,32 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#ffffff',
     fontWeight: '600',
+  },
+  filaFichasEspera: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  chipFichasEspera: {
+    minWidth: 38,
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 9,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+  },
+  chipFichasEsperaActivo: {
+    borderColor: COLOR_MENTA,
+    backgroundColor: 'rgba(111,251,190,0.18)',
+  },
+  textoChipEspera: {
+    color: '#d1d5db',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  textoChipEsperaActivo: {
+    color: COLOR_MENTA,
   },
   botonEmpezar: {
     flexDirection: 'row',

@@ -129,6 +129,74 @@ describe('partidas en tiempo real', () => {
     expect(error.error).toBe('solo_el_anfitrion');
   });
 
+  it('cada jugador recibe un color de ficha distinto al empezar', async () => {
+    servidor = crearServidor();
+    const url = await escuchar(servidor.server);
+    // Ambos usuarios se registran con el mismo color (#2563eb)
+    const ana = await registrarYConectar(url, 'Ana');
+    const leo = await registrarYConectar(url, 'Leo');
+    const codigo = await crearSala(ana.token, 'Mesa', 0);
+
+    ana.socket.emit('sala:unirse', codigo);
+    leo.socket.emit('sala:unirse', codigo);
+    await new Promise(r => setTimeout(r, 150));
+
+    const promEmpezada = esperarEvento<{ jugadores: { id: number; color: string; esBot: boolean }[] }>(
+      ana.socket,
+      'partida:empezada',
+    );
+    ana.socket.emit('sala:empezar', { codigo, robarPozo: true });
+    const empezada = await promEmpezada;
+
+    const colores = empezada.jugadores.map(j => j.color);
+    expect(new Set(colores).size).toBe(colores.length);
+  });
+
+  it('si el anfitrión abandona una sala en espera, el rol pasa a otro jugador', async () => {
+    servidor = crearServidor();
+    const url = await escuchar(servidor.server);
+    const ana = await registrarYConectar(url, 'Ana');
+    const leo = await registrarYConectar(url, 'Leo');
+    const codigo = await crearSala(ana.token, 'Mesa', 0);
+
+    ana.socket.emit('sala:unirse', codigo);
+    leo.socket.emit('sala:unirse', codigo);
+    await new Promise(r => setTimeout(r, 150));
+
+    const promActualizada = esperarEvento<{ hostId: number }>(leo.socket, 'sala:actualizada');
+    ana.socket.disconnect();
+    const actualizada = await promActualizada;
+    expect(actualizada.hostId).toBe(leo.usuario.id);
+
+    const promEmpezada = esperarEvento<{ jugadores: unknown[] }>(leo.socket, 'partida:empezada');
+    leo.socket.emit('sala:empezar', { codigo, robarPozo: true });
+    await promEmpezada;
+  });
+
+  it('sala:actualizar_perfil refresca la foto en la sala', async () => {
+    servidor = crearServidor();
+    const url = await escuchar(servidor.server);
+    const ana = await registrarYConectar(url, 'Ana');
+    const leo = await registrarYConectar(url, 'Leo');
+    const codigo = await crearSala(ana.token, 'Mesa', 0);
+
+    ana.socket.emit('sala:unirse', codigo);
+    leo.socket.emit('sala:unirse', codigo);
+    await new Promise(r => setTimeout(r, 150));
+
+    const foto = `data:image/jpeg;base64,${'C'.repeat(10)}`;
+    await supertest(servidor!.app).put('/usuarios/yo').set('Authorization', `Bearer ${ana.token}`).send({ foto });
+
+    const promActualizada = esperarEvento<{ jugadores: { nombre: string; foto?: string }[] }>(
+      leo.socket,
+      'sala:actualizada',
+    );
+    ana.socket.emit('sala:actualizar_perfil');
+    const actualizada = await promActualizada;
+    const jugadorAna = actualizada.jugadores.find(j => j.nombre === 'Ana');
+    expect(jugadorAna?.foto).toBe(foto);
+  });
+
   it('unirse a una sala inexistente devuelve error', async () => {
     servidor = crearServidor();
     const url = await escuchar(servidor.server);
@@ -182,5 +250,47 @@ describe('partidas en tiempo real', () => {
     expect(pago).toBeDefined();
     expect(['ganancia', 'reembolso', 'perdida']).toContain(pago.tipo);
     expect(pago.monto).toBe(50);
+  });
+
+  it('el chat de la sala difunde mensajes y el historial llega a quien se une', async () => {
+    servidor = crearServidor();
+    const url = await escuchar(servidor.server);
+    const ana = await registrarYConectar(url, 'Ana');
+    const leo = await registrarYConectar(url, 'Leo');
+    const codigo = await crearSala(ana.token, 'Mesa chat', 0);
+
+    ana.socket.emit('sala:unirse', codigo);
+    await new Promise(r => setTimeout(r, 150));
+
+    const promMensaje = esperarEvento<{ mensaje: { nombre: string; texto: string } }>(ana.socket, 'chat:mensaje');
+    leo.socket.emit('sala:unirse', codigo);
+    await new Promise(r => setTimeout(r, 150));
+    leo.socket.emit('chat:enviar', { codigo, texto: '¡Hola Ana!' });
+
+    const recibido = await promMensaje;
+    expect(recibido.mensaje.nombre).toBe('Leo');
+    expect(recibido.mensaje.texto).toBe('¡Hola Ana!');
+
+    // Un tercer jugador que se une recibe el historial con el mensaje anterior
+    const pablo = await registrarYConectar(url, 'Pablo');
+    const promHistorial = esperarEvento<{ mensajes: { nombre: string; texto: string }[] }>(pablo.socket, 'chat:historial');
+    pablo.socket.emit('sala:unirse', codigo);
+    const historial = await promHistorial;
+    expect(historial.mensajes.some(m => m.nombre === 'Leo' && m.texto === '¡Hola Ana!')).toBe(true);
+  });
+
+  it('el chat rechaza mensajes vacíos o demasiado largos', async () => {
+    servidor = crearServidor();
+    const url = await escuchar(servidor.server);
+    const ana = await registrarYConectar(url, 'Ana');
+    const codigo = await crearSala(ana.token, 'Mesa chat', 0);
+
+    ana.socket.emit('sala:unirse', codigo);
+    await new Promise(r => setTimeout(r, 150));
+
+    const promError = esperarEvento<{ error: string }>(ana.socket, 'chat:error');
+    ana.socket.emit('chat:enviar', { codigo, texto: '' });
+    const error = await promError;
+    expect(error.error).toBe('mensaje_invalido');
   });
 });

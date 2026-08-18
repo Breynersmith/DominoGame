@@ -20,6 +20,7 @@ import { reproducir } from '../services/sonido';
 export interface ConfigJugador {
   nombre: string;
   esBot: boolean;
+  color?: string;
 }
 
 type Fase = 'configuracion' | 'jugando' | 'terminado';
@@ -110,8 +111,8 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     set({ estado: final, fase, pago, mensaje: null });
   },
 
-  iniciar: (config, opciones = { robarPozo: true, apuesta: 0 }) => {
-    const estado = iniciarPartida(config.map(c => c.nombre), opciones);
+  iniciar: (config, opciones = { robarPozo: true, apuesta: 0, fichasPorJugador: 7 }) => {
+    const estado = iniciarPartida(config.map(c => c.nombre), opciones, config.map(c => c.color));
     const jugadores: Jugador[] = estado.jugadores.map((j, i) => ({
       ...j,
       esBot: config[i].esBot,

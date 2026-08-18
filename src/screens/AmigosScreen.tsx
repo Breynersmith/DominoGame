@@ -1,16 +1,22 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { BotonPrincipal, CampoTexto, PantallaBase, Tarjeta, COLOR_MENTA } from '../components/ui';
+import { BotonPrincipal, CampoTexto, PantallaBase, Tarjeta, COLOR_MENTA, COLOR_AMBAR } from '../components/ui';
 import { useT } from '../i18n/useT';
-import { apiAgregarAmigo, apiAmigos, apiEliminarAmigo, ErrorApi } from '../services/api';
+import { apiAgregarAmigo, apiAmigos, apiCrearSala, apiEliminarAmigo, apiInvitarAmigo, ErrorApi } from '../services/api';
 import { useAppStore } from '../store/appStore';
+import { useOnlineStore } from '../store/onlineStore';
 
 export function AmigosScreen() {
   const t = useT();
   const amigos = useAppStore(s => s.amigos);
   const online = useAppStore(s => s.online);
+  const perfil = useAppStore(s => s.perfil);
+  const modoAmigos = useAppStore(s => s.modoAmigos);
+  const setModoAmigos = useAppStore(s => s.setModoAmigos);
+  const irA = useAppStore(s => s.irA);
   const set = useAppStore.setState;
   const volverAtras = useAppStore(s => s.volverAtras);
+  const onlineStore = useOnlineStore();
 
   const [nombre, setNombre] = useState('');
   const [exito, setExito] = useState(false);
@@ -63,6 +69,26 @@ export function AmigosScreen() {
       .catch(() => {});
   };
 
+  const invitar = async (amigo: string) => {
+    setError('');
+    setExito(false);
+    if (!online) {
+      setError(t('sinConexion'));
+      return;
+    }
+    try {
+      const { sala } = await apiCrearSala(`Sala de ${perfil?.nombre ?? 'jugador'}`, 0);
+      await apiInvitarAmigo(amigo, sala.codigo);
+      setExito(true);
+      onlineStore.conectarse();
+      onlineStore.unirseSala(sala.codigo);
+      setModoAmigos('lista');
+      irA('partidaOnline');
+    } catch {
+      setError(t('sinConexion'));
+    }
+  };
+
   return (
     <PantallaBase titulo={t('amigos')} onVolver={volverAtras}>
       <ScrollView contentContainerStyle={styles.contenido} showsVerticalScrollIndicator={false}>
@@ -99,9 +125,15 @@ export function AmigosScreen() {
                 <Text style={styles.inicialAmigo}>{a.charAt(0).toUpperCase()}</Text>
               </View>
               <Text style={styles.nombreAmigo}>{a}</Text>
-              <Pressable style={styles.botonEliminar} onPress={() => eliminar(a)}>
-                <Text style={styles.textoEliminar}>{t('eliminar')}</Text>
-              </Pressable>
+              {modoAmigos === 'invitar' ? (
+                <Pressable style={styles.botonInvitar} onPress={() => invitar(a)}>
+                  <Text style={styles.textoInvitar}>{t('invitar')}</Text>
+                </Pressable>
+              ) : (
+                <Pressable style={styles.botonEliminar} onPress={() => eliminar(a)}>
+                  <Text style={styles.textoEliminar}>{t('eliminar')}</Text>
+                </Pressable>
+              )}
             </Tarjeta>
           ))
         )}
@@ -189,6 +221,19 @@ const styles = StyleSheet.create({
   },
   textoEliminar: {
     color: '#ff6b6b',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  botonInvitar: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,185,95,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,185,95,0.4)',
+  },
+  textoInvitar: {
+    color: COLOR_AMBAR,
     fontSize: 13,
     fontWeight: '600',
   },

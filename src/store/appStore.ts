@@ -3,6 +3,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Idioma } from '../i18n/traducciones';
+import { useOnlineStore } from './onlineStore';
 import {
   apiAgregarAmigo,
   apiEliminarAmigo,
@@ -29,6 +30,7 @@ export interface PerfilUsuario {
   pais?: string;
   color: string;
   kycEstado?: string;
+  foto?: string;
 }
 
 export interface Login2faPendiente {
@@ -125,8 +127,10 @@ interface AppStore {
   vista: Vista;
   historial: Vista[];
   salaModo: SalaModo;
+  modoAmigos: 'lista' | 'invitar';
   salaConfig: SalaConfig | null;
   setSalaModo: (modo: SalaModo) => void;
+  setModoAmigos: (modo: 'lista' | 'invitar') => void;
   setSalaConfig: (config: SalaConfig | null) => void;
   saldo: number;
   transacciones: Transaccion[];
@@ -185,7 +189,7 @@ async function guardar(get: () => AppStore) {
 }
 
 function mapearUsuario(u: UsuarioApi): PerfilUsuario {
-  return { id: u.id, nombre: u.nombre, color: u.color, kycEstado: u.kycEstado ?? 'no_enviado' };
+  return { id: u.id, nombre: u.nombre, color: u.color, kycEstado: u.kycEstado ?? 'no_enviado', foto: u.foto };
 }
 
 function esErrorDeRed(err: unknown): boolean {
@@ -225,9 +229,11 @@ async function guardarSesionServidor(
       nombre: usuario.nombre,
       color: usuario.color,
       kycEstado: usuario.kycEstado ?? 'no_enviado',
+      foto: usuario.foto,
     },
     saldo: usuario.saldo,
   });
+  actualizarToken(token);
   await guardarToken(token);
 }
 
@@ -241,6 +247,7 @@ export const useAppStore = create<AppStore>()((set, get) => ({
   vista: 'bienvenida',
   historial: [],
   salaModo: 'crear',
+  modoAmigos: 'lista',
   salaConfig: null,
   saldo: SALDO_INICIAL,
   transacciones: [],
@@ -288,6 +295,7 @@ export const useAppStore = create<AppStore>()((set, get) => ({
               nombre: usuario.nombre,
               color: usuario.color,
               kycEstado: usuario.kycEstado ?? 'no_enviado',
+              foto: usuario.foto,
             }
           : mapearUsuario(usuario),
         saldo: usuario.saldo,
@@ -394,6 +402,7 @@ export const useAppStore = create<AppStore>()((set, get) => ({
   },
 
   cerrarSesion: () => {
+    useOnlineStore.getState().desconectar();
     set({ perfil: null, token: null, online: false, login2fa: null, vista: 'bienvenida', historial: [] });
     void guardarToken(null);
     void AsyncStorage.removeItem(CLAVE_GUARDADO).catch(() => {});
@@ -414,6 +423,7 @@ export const useAppStore = create<AppStore>()((set, get) => ({
       return { vista, historial };
     }),
   setSalaModo: modo => set({ salaModo: modo }),
+  setModoAmigos: modo => set({ modoAmigos: modo }),
   setSalaConfig: config => set({ salaConfig: config }),
 
   editarPerfil: cambios => {

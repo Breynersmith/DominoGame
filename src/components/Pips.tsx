@@ -40,9 +40,10 @@ const POSICIONES: Record<number, [number, number][]> = {
 interface Props {
   valor: ValorFicha;
   size: number;
+  color?: string;
 }
 
-export function Pips({ valor, size }: Props) {
+export function Pips({ valor, size, color = '#1f2937' }: Props) {
   const dotSize = size * 0.24;
   const dots = POSICIONES[valor] ?? [];
 
@@ -63,7 +64,7 @@ export function Pips({ valor, size }: Props) {
             width: dotSize,
             height: dotSize,
             borderRadius: dotSize / 2,
-            backgroundColor: '#1f2937',
+            backgroundColor: color,
             left: x * size - dotSize / 2,
             top: y * size - dotSize / 2,
           }}

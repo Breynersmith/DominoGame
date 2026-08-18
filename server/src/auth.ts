@@ -13,6 +13,7 @@ export interface UsuarioAutenticado {
   color: string;
   saldo: number;
   kycEstado: 'no_enviado' | 'pendiente' | 'aprobado' | 'rechazado';
+  foto?: string;
 }
 
 export const PREGUNTAS_SEGURIDAD = ['nombre_mascota', 'ciudad_nacimiento', 'comida_favorita', 'nombre_colegio'] as const;
@@ -131,6 +132,7 @@ export function serializarUsuario(fila: {
   color: string;
   saldo: number;
   kyc_estado?: string;
+  foto?: string | null;
 }): UsuarioAutenticado {
   return {
     id: fila.id,
@@ -142,6 +144,7 @@ export function serializarUsuario(fila: {
     )
       ? (fila.kyc_estado as UsuarioAutenticado['kycEstado'])
       : 'no_enviado',
+    foto: fila.foto ?? undefined,
   };
 }
 
@@ -158,8 +161,8 @@ export function requiereAuth(db: Db) {
       res.status(401).json({ error: 'token_invalido' });
       return;
     }
-    const fila = db.prepare('SELECT id, nombre, color, saldo, kyc_estado FROM usuarios WHERE id = ?').get(datos.uid) as
-      | { id: number; nombre: string; color: string; saldo: number; kyc_estado: string }
+    const fila = db.prepare('SELECT id, nombre, color, saldo, kyc_estado, foto FROM usuarios WHERE id = ?').get(datos.uid) as
+      | { id: number; nombre: string; color: string; saldo: number; kyc_estado: string; foto?: string | null }
       | undefined;
     if (!fila) {
       res.status(401).json({ error: 'usuario_no_existe' });

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { BotonSecundario, PantallaBase, Tarjeta, COLOR_MENTA, COLOR_AMBAR } from '../components/ui';
 import { useT } from '../i18n/useT';
 import { apiListarSalas, SalaApi } from '../services/api';
@@ -38,6 +38,7 @@ export function LobbyScreen() {
   const volverAtras = useAppStore(s => s.volverAtras);
   const irA = useAppStore(s => s.irA);
   const setSalaModo = useAppStore(s => s.setSalaModo);
+  const setModoAmigos = useAppStore(s => s.setModoAmigos);
   const online = useAppStore(s => s.online);
   const onlineStore = useOnlineStore();
 
@@ -86,22 +87,28 @@ export function LobbyScreen() {
         {salas.map(sala => {
           const llena = sala.jugadores >= sala.max;
           return (
-            <Tarjeta key={sala.id} estilo={styles.sala}>
-              <View style={styles.infoSala}>
-                <Text style={styles.nombreSala}>{sala.nombre}</Text>
-                <Text style={styles.detalleSala}>
-                  {t('apuesta')}: {sala.apuesta} {t('creditos')}
-                </Text>
-                <Text style={styles.jugadores}>
-                  {t('jugadores')}: {sala.jugadores}/{sala.max}
-                </Text>
-              </View>
-              <View style={[styles.chipEstado, llena ? styles.chipLlena : styles.chipDisponible]}>
-                <Text style={[styles.textoEstado, llena && styles.textoLlena]}>
-                  {llena ? t('salaLlena') : t('unirseBtn')}
-                </Text>
-              </View>
-            </Tarjeta>
+            <Pressable
+              key={sala.id}
+              style={({ pressed }) => [styles.salaPresionable, pressed && styles.salaPresionada]}
+              onPress={() => unirse(sala)}
+            >
+              <Tarjeta estilo={styles.sala}>
+                <View style={styles.infoSala}>
+                  <Text style={styles.nombreSala}>{sala.nombre}</Text>
+                  <Text style={styles.detalleSala}>
+                    {t('apuesta')}: {sala.apuesta} {t('creditos')}
+                  </Text>
+                  <Text style={styles.jugadores}>
+                    {t('jugadores')}: {sala.jugadores}/{sala.max}
+                  </Text>
+                </View>
+                <View style={[styles.chipEstado, llena ? styles.chipLlena : styles.chipDisponible]}>
+                  <Text style={[styles.textoEstado, llena && styles.textoLlena]}>
+                    {llena ? t('salaLlena') : t('unirseBtn')}
+                  </Text>
+                </View>
+              </Tarjeta>
+            </Pressable>
           );
         })}
 
@@ -118,6 +125,13 @@ export function LobbyScreen() {
             onPress={() => {
               setSalaModo('unirse');
               irA('sala');
+            }}
+          />
+          <BotonSecundario
+            label={t('jugarConAmigo')}
+            onPress={() => {
+              setModoAmigos('invitar');
+              irA('amigos');
             }}
           />
         </View>
@@ -140,6 +154,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 10,
+  },
+  salaPresionable: {
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  salaPresionada: {
+    opacity: 0.6,
   },
   infoSala: {
     flex: 1,

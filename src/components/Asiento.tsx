@@ -2,8 +2,8 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Jugador } from '../game/types';
 import { useT } from '../i18n/useT';
+import { Avatar } from './Avatar';
 import { FichaBocaAbajo } from './icons/FichaBocaAbajo';
-import { IconoJugador } from './icons/IconoJugador';
 
 const COLOR_MENTA = '#6FFBBE';
 const COLOR_AMBAR = '#ffb95f';
@@ -38,7 +38,7 @@ export function Asiento({
           { backgroundColor: color },
         ]}
       >
-        <IconoJugador color="#ffffff" size={22} />
+        <Avatar foto={jugador.foto} color={color} nombre={jugador.nombre} tamano={36} />
       </View>
     );
   }
@@ -53,7 +53,7 @@ export function Asiento({
       ]}
     >
       <View style={[styles.avatar, vertical && styles.avatarVertical, { backgroundColor: color }]}>
-        <IconoJugador color="#ffffff" size={vertical ? 18 : 22} />
+        <Avatar foto={jugador.foto} color={color} nombre={jugador.nombre} tamano={vertical ? 28 : 38} />
       </View>
       <View style={vertical ? styles.infoVertical : styles.info}>
         <Text style={[styles.nombre, activo && styles.nombreActivo]} numberOfLines={1}>

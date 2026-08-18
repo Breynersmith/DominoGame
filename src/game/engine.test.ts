@@ -75,19 +75,16 @@ describe('repartirFichas', () => {
     }
   });
 
-  it('sin pozo reparte todas las fichas entre los jugadores', () => {
+  it('sin pozo reparte exactamente fichasPorJugador a cada jugador', () => {
     const { manos, pozo } = repartirFichas(generarFichas(), 3, FICHAS_POR_JUGADOR, false);
     expect(pozo).toHaveLength(0);
-    const total = manos.reduce((acc, mano) => acc + mano.length, 0);
-    expect(total).toBe(28);
+    manos.forEach(mano => expect(mano).toHaveLength(FICHAS_POR_JUGADOR));
   });
 
-  it('sin pozo las manos difieren en máximo 1 ficha', () => {
-    for (let i = 0; i < 20; i++) {
-      const { manos } = repartirFichas(generarFichas(), 3, FICHAS_POR_JUGADOR, false);
-      const largos = manos.map(mano => mano.length);
-      expect(Math.max(...largos) - Math.min(...largos)).toBeLessThanOrEqual(1);
-    }
+  it('sin pozo respeta un número de fichas distinto a 7', () => {
+    const { manos, pozo } = repartirFichas(generarFichas(), 2, 9, false);
+    expect(pozo).toHaveLength(0);
+    manos.forEach(mano => expect(mano).toHaveLength(9));
   });
 });
 
@@ -124,11 +121,34 @@ describe('iniciarPartida', () => {
     expect(repartidas + estado.pozo.length).toBe(28);
   });
 
-  it('sin pozo reparte las 28 fichas entre los jugadores', () => {
+  it('sin pozo reparte exactamente 7 fichas por jugador', () => {
     const estado = iniciarPartida(['Ana', 'Luis'], { robarPozo: false });
     expect(estado.pozo).toHaveLength(0);
-    const repartidas = estado.jugadores.reduce((acc, j) => acc + j.mano.length, 0);
-    expect(repartidas).toBe(28);
+    estado.jugadores.forEach(j => expect(j.mano).toHaveLength(7));
+  });
+
+  it('respeta el número de fichas elegido por jugador', () => {
+    const estado = iniciarPartida(['Ana', 'Luis'], { robarPozo: true, fichasPorJugador: 9 });
+    expect(estado.pozo).toHaveLength(28 - 9 * 2);
+    estado.jugadores.forEach(j => expect(j.mano).toHaveLength(9));
+  });
+
+  it('asigna el color de cada jugador cuando se pasan colores', () => {
+    const estado = iniciarPartida(['Ana', 'Luis'], undefined, ['#ff0000', '#00ff00']);
+    expect(estado.jugadores[0].color).toBe('#ff0000');
+    expect(estado.jugadores[1].color).toBe('#00ff00');
+  });
+
+  it('deja el color sin definir si no se pasan colores', () => {
+    const estado = iniciarPartida(['Ana', 'Luis']);
+    expect(estado.jugadores[0].color).toBeUndefined();
+  });
+
+  it('garantiza colores distintos aunque se repitan', () => {
+    const estado = iniciarPartida(['Ana', 'Luis', 'Leo'], undefined, ['#ff0000', '#ff0000', undefined]);
+    const colores = estado.jugadores.map(j => j.color);
+    expect(colores[0]).toBe('#ff0000');
+    expect(new Set(colores).size).toBe(colores.length);
   });
 });
 
@@ -219,6 +239,20 @@ describe('aplicarJugada', () => {
 
     expect(nuevoEstado.extremoIzquierdo).toBe(5);
     expect(nuevoEstado.tablero).toHaveLength(2);
+  });
+
+  it('registra el jugadorId en la ficha colocada en el tablero', () => {
+    let estado = iniciarPartida(['Ana', 'Luis']);
+    estado = { ...estado, jugadores: [
+      { id: 'jugador-0', nombre: 'Ana', mano: [{ id: '6-6', lado1: 6, lado2: 6 }] },
+      { id: 'jugador-1', nombre: 'Luis', mano: [] },
+    ], turnoActual: 0 };
+
+    const nuevoEstado = aplicarJugada(estado, {
+      jugadorId: 'jugador-0', ficha: { id: '6-6', lado1: 6, lado2: 6 }, extremo: 'derecho',
+    });
+
+    expect(nuevoEstado.tablero[0].jugadorId).toBe('jugador-0');
   });
 });
 

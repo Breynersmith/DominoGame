@@ -60,6 +60,7 @@ export interface UsuarioApi {
   color: string;
   saldo: number;
   kycEstado?: string;
+  foto?: string;
 }
 
 export interface TransaccionApi {
@@ -212,7 +213,7 @@ export function apiYo() {
   return peticion<{ usuario: UsuarioApi; transacciones: TransaccionApi[] }>('/usuarios/yo');
 }
 
-export function apiEditarPerfil(cambios: { nombre?: string; color?: string }) {
+export function apiEditarPerfil(cambios: { nombre?: string; color?: string; foto?: string }) {
   return peticion<{ usuario: UsuarioApi }>('/usuarios/yo', {
     method: 'PUT',
     body: JSON.stringify(cambios),
@@ -273,5 +274,14 @@ export function apiCrearDisputa(mensaje: string) {
   return peticion<{ disputa: { id: number; mensaje: string; estado: string } }>('/disputas', {
     method: 'POST',
     body: JSON.stringify({ mensaje }),
+  });
+}
+
+// ---------- Invitaciones ----------
+
+export function apiInvitarAmigo(nombre: string, codigo: string) {
+  return peticion<{ ok: true }>('/notificaciones/invitar', {
+    method: 'POST',
+    body: JSON.stringify({ nombre, codigo }),
   });
 }

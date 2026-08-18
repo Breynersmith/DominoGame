@@ -35,6 +35,25 @@ export interface Traducciones {
   puntos: string;
   jugarDeNuevo: string;
   cambiarJugadores: string;
+  jugarOtraPartida: string;
+  juegoCerrado: string;
+  ganadorEs: string;
+  perfilJugador: string;
+  fichasPorJugador: string;
+  fichasPorJugadorDesc: string;
+  soloJugadores: string;
+  noTePuedesAgregar: string;
+  fichasEnMano: string;
+  cerrar: string;
+  jugadorAbandono: string;
+  esperarJugador: string;
+  abandonarPartida: string;
+  esperandoJugador: string;
+  partidaAbandonada: string;
+  rivalAbandono: string;
+  racha: string;
+  eliminarDeAmigos: string;
+  amigoEliminado: string;
   fichas: string;
   pensando: string;
   comienzaPartida: string;
@@ -131,6 +150,11 @@ export interface Traducciones {
   recargaExitosa: string;
   transacciones: string;
   lobby: string;
+  jugarVsBot: string;
+  multijugador: string;
+  jugarConAmigo: string;
+  invitar: string;
+  invitacionEnviada: string;
   salasDisponibles: string;
   crearSala: string;
   unirseSalaPrivada: string;
@@ -232,6 +256,19 @@ export interface Traducciones {
   predeterminado: string;
   marcarPredeterminado: string;
   pagoEliminado: string;
+  cambiarFoto: string;
+  tomarFoto: string;
+  galeria: string;
+  quitarFoto: string;
+  permisoFotosDenegado: string;
+  permisoCamaraDenegado: string;
+  guardarPerfilError: string;
+  chat: string;
+  chatTitulo: string;
+  chatPlaceholder: string;
+  chatVacio: string;
+  chatDemasiadoRapido: string;
+  mensajeInvalido: string;
 }
 
 const es: Traducciones = {
@@ -267,6 +304,25 @@ const es: Traducciones = {
   puntos: '{n} pts',
   jugarDeNuevo: 'Jugar de nuevo',
   cambiarJugadores: 'Cambiar jugadores',
+  jugarOtraPartida: 'Jugar otra partida',
+  juegoCerrado: 'Juego cerrado',
+  ganadorEs: 'Ganador: {name}',
+  perfilJugador: 'Perfil de jugador',
+  fichasPorJugador: 'Fichas por jugador',
+  fichasPorJugadorDesc: 'Número de fichas que recibe cada jugador al iniciar',
+  soloJugadores: 'Solo puedes agregar jugadores humanos',
+  noTePuedesAgregar: 'No puedes agregarte a ti mismo',
+  fichasEnMano: 'Fichas en mano',
+  cerrar: 'Cerrar',
+  jugadorAbandono: 'El jugador {name} abandonó la partida',
+  esperarJugador: 'Esperar a {name}',
+  abandonarPartida: 'Abandonar partida',
+  esperandoJugador: 'Esperando a {name}...',
+  partidaAbandonada: 'Partida abandonada',
+  rivalAbandono: 'Tu rival abandonó la partida',
+  racha: 'Racha',
+  eliminarDeAmigos: 'Eliminar de mis amigos',
+  amigoEliminado: 'Amigo eliminado',
   fichas: '{n} fichas',
   pensando: 'Pensando…',
   comienzaPartida: '{name} comienza la partida',
@@ -363,6 +419,11 @@ const es: Traducciones = {
   recargaExitosa: 'Saldo recargado correctamente',
   transacciones: 'Transacciones',
   lobby: 'Lobby',
+  jugarVsBot: 'Jugar vs bot',
+  multijugador: 'Multijugador',
+  jugarConAmigo: 'Jugar con un amigo',
+  invitar: 'Invitar',
+  invitacionEnviada: 'Invitación enviada',
   salasDisponibles: 'Salas disponibles',
   crearSala: 'Crear sala',
   unirseSalaPrivada: 'Unirse a sala privada',
@@ -466,6 +527,19 @@ const es: Traducciones = {
   predeterminado: 'Predeterminado',
   marcarPredeterminado: 'Usar por defecto',
   pagoEliminado: 'Método eliminado',
+  cambiarFoto: 'Cambiar foto',
+  tomarFoto: 'Tomar foto',
+  galeria: 'Galería',
+  quitarFoto: 'Quitar foto',
+  permisoFotosDenegado: 'Necesitamos acceso a tus fotos para cambiar tu foto de perfil',
+  permisoCamaraDenegado: 'Necesitamos acceso a la cámara para tomar tu foto de perfil',
+  guardarPerfilError: 'No se pudo guardar. Revisa los datos e inténtalo de nuevo.',
+  chat: 'Chat',
+  chatTitulo: 'Chat de la sala',
+  chatPlaceholder: 'Escribe un mensaje...',
+  chatVacio: 'Sin mensajes todavía. ¡Sé el primero en saludar!',
+  chatDemasiadoRapido: 'Espera un momento antes de enviar otro mensaje',
+  mensajeInvalido: 'El mensaje no es válido',
 };
 
 const en: Traducciones = {
@@ -501,6 +575,25 @@ const en: Traducciones = {
   puntos: '{n} pts',
   jugarDeNuevo: 'Play again',
   cambiarJugadores: 'Change players',
+  jugarOtraPartida: 'Play another game',
+  juegoCerrado: 'Game closed',
+  ganadorEs: 'Winner: {name}',
+  perfilJugador: 'Player profile',
+  fichasPorJugador: 'Tiles per player',
+  fichasPorJugadorDesc: 'Number of tiles each player receives at the start',
+  soloJugadores: 'You can only add human players',
+  noTePuedesAgregar: "You can't add yourself",
+  fichasEnMano: 'Tiles in hand',
+  cerrar: 'Close',
+  jugadorAbandono: 'Player {name} left the game',
+  esperarJugador: 'Wait for {name}',
+  abandonarPartida: 'Leave game',
+  esperandoJugador: 'Waiting for {name}...',
+  partidaAbandonada: 'Game abandoned',
+  rivalAbandono: 'Your opponent left the game',
+  racha: 'Streak',
+  eliminarDeAmigos: 'Remove from friends',
+  amigoEliminado: 'Friend removed',
   fichas: '{n} tiles',
   pensando: 'Thinking…',
   comienzaPartida: '{name} starts the game',
@@ -597,6 +690,11 @@ const en: Traducciones = {
   recargaExitosa: 'Balance added successfully',
   transacciones: 'Transactions',
   lobby: 'Lobby',
+  jugarVsBot: 'Play vs bot',
+  multijugador: 'Multiplayer',
+  jugarConAmigo: 'Play with a friend',
+  invitar: 'Invite',
+  invitacionEnviada: 'Invitation sent',
   salasDisponibles: 'Available rooms',
   crearSala: 'Create room',
   unirseSalaPrivada: 'Join private room',
@@ -700,6 +798,19 @@ const en: Traducciones = {
   predeterminado: 'Default',
   marcarPredeterminado: 'Use as default',
   pagoEliminado: 'Method removed',
+  cambiarFoto: 'Change photo',
+  tomarFoto: 'Take photo',
+  galeria: 'Gallery',
+  quitarFoto: 'Remove photo',
+  permisoFotosDenegado: 'We need access to your photos to change your profile photo',
+  permisoCamaraDenegado: 'We need camera access to take your profile photo',
+  guardarPerfilError: 'Could not save. Check the details and try again.',
+  chat: 'Chat',
+  chatTitulo: 'Room chat',
+  chatPlaceholder: 'Type a message...',
+  chatVacio: 'No messages yet. Be the first to say hi!',
+  chatDemasiadoRapido: 'Wait a moment before sending another message',
+  mensajeInvalido: 'The message is not valid',
 };
 
 const cat: Traducciones = {
@@ -735,6 +846,25 @@ const cat: Traducciones = {
   puntos: '{n} pts',
   jugarDeNuevo: 'Jugar de nou',
   cambiarJugadores: 'Canviar jugadors',
+  jugarOtraPartida: 'Jugar una altra partida',
+  juegoCerrado: 'Partida tancada',
+  ganadorEs: 'Guanyador: {name}',
+  perfilJugador: 'Perfil del jugador',
+  fichasPorJugador: 'Fitxes per jugador',
+  fichasPorJugadorDesc: 'Nombre de fitxes que rep cada jugador en iniciar',
+  soloJugadores: 'Nom pots afegir jugadors bot',
+  noTePuedesAgregar: 'No pots afegir-te a tu mateix',
+  fichasEnMano: 'Fitxes a la mà',
+  cerrar: 'Tanca',
+  jugadorAbandono: 'El jugador {name} ha abandonat la partida',
+  esperarJugador: 'Espera a {name}',
+  abandonarPartida: 'Abandonar partida',
+  esperandoJugador: 'Esperant a {name}...',
+  partidaAbandonada: 'Partida abandonada',
+  rivalAbandono: 'El teu rival ha abandonat la partida',
+  racha: 'Ratxa',
+  eliminarDeAmigos: 'Elimina dels meus amics',
+  amigoEliminado: 'Amic eliminat',
   fichas: '{n} fitxes',
   pensando: 'Pensant…',
   comienzaPartida: '{name} comença la partida',
@@ -831,6 +961,11 @@ const cat: Traducciones = {
   recargaExitosa: 'Saldo recarregat correctament',
   transacciones: 'Transaccions',
   lobby: 'Lobby',
+  jugarVsBot: 'Jugar contra bot',
+  multijugador: 'Multijugador',
+  jugarConAmigo: 'Jugar amb un amic',
+  invitar: 'Convida',
+  invitacionEnviada: 'Invitació enviada',
   salasDisponibles: 'Sales disponibles',
   crearSala: 'Crear sala',
   unirseSalaPrivada: "Unir-se a una sala privada",
@@ -934,6 +1069,19 @@ const cat: Traducciones = {
   predeterminado: 'Per defecte',
   marcarPredeterminado: 'Utilitzar per defecte',
   pagoEliminado: 'Mètode eliminat',
+  cambiarFoto: 'Canviar foto',
+  tomarFoto: 'Fer foto',
+  galeria: 'Galeria',
+  quitarFoto: 'Treure foto',
+  permisoFotosDenegado: 'Necessitem accés a les teves fotos per canviar la teva foto de perfil',
+  permisoCamaraDenegado: 'Necessitem accés a la càmera per fer la teva foto de perfil',
+  guardarPerfilError: "No s'ha pogut desar. Revisa les dades i torna-ho a provar.",
+  chat: 'Xat',
+  chatTitulo: 'Xat de la sala',
+  chatPlaceholder: 'Escriu un missatge...',
+  chatVacio: 'Encara no hi ha missatges. Sigues el primer a saludar!',
+  chatDemasiadoRapido: 'Espera un moment abans d\'enviar un altre missatge',
+  mensajeInvalido: 'El missatge no és vàlid',
 };
 
 export const TRADUCCIONES: Record<Idioma, Traducciones> = { es, en, cat };

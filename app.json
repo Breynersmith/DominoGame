@@ -28,7 +28,14 @@
     },
     "plugins": [
       "expo-font",
-      "expo-audio"
+      "expo-audio",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "La app accede a tus fotos para usarla como foto de perfil.",
+          "cameraPermission": "La app accede a la cámara para tomar tu foto de perfil."
+        }
+      ]
     ]
   }
 }

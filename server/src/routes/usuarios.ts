@@ -17,11 +17,12 @@ export function crearRouterUsuarios(db: Db): Router {
     });
   });
 
-  // PUT /usuarios/yo { nombre?, color? }
+  // PUT /usuarios/yo { nombre?, color?, foto? }
   r.put('/yo', (req: Request, res: Response): void => {
     const u = (req as Request & { usuario: UsuarioAutenticado }).usuario;
     const nombre = req.body?.nombre !== undefined ? String(req.body.nombre).trim() : undefined;
     const color = req.body?.color !== undefined ? String(req.body.color) : undefined;
+    const foto = req.body?.foto !== undefined ? String(req.body.foto) : undefined;
 
     if (nombre !== undefined) {
       if (nombre.length < 2 || nombre.length > 18) {
@@ -35,15 +36,32 @@ export function crearRouterUsuarios(db: Db): Router {
       }
     }
 
-    db.prepare(
-      'UPDATE usuarios SET nombre = COALESCE(?, nombre), color = COALESCE(?, color) WHERE id = ?'
-    ).run(nombre ?? null, color ?? null, u.id);
+    if (foto !== undefined) {
+      // Foto de perfil como data URI (p. ej. data:image/jpeg;base64,...).
+      // Una cadena vacía quita la foto.
+      if (foto !== '' && (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(foto) || foto.length > 500_000)) {
+        res.status(400).json({ error: 'foto_invalida' });
+        return;
+      }
+    }
 
-    const fila = db.prepare('SELECT id, nombre, color, saldo FROM usuarios WHERE id = ?').get(u.id) as {
+    let sql = 'UPDATE usuarios SET nombre = COALESCE(?, nombre), color = COALESCE(?, color)';
+    const params: Array<string | number | null> = [nombre ?? null, color ?? null];
+    if (foto !== undefined) {
+      // '' quita la foto; de lo contrario se guarda la data URI.
+      sql += ', foto = ?';
+      params.push(foto === '' ? null : foto);
+    }
+    sql += ' WHERE id = ?';
+    params.push(u.id);
+    db.prepare(sql).run(...params);
+
+    const fila = db.prepare('SELECT id, nombre, color, saldo, foto FROM usuarios WHERE id = ?').get(u.id) as {
       id: number;
       nombre: string;
       color: string;
       saldo: number;
+      foto?: string | null;
     };
     res.json({ usuario: fila });
   });

@@ -50,6 +50,10 @@ export function migrar(db: Db): void {
   anadir('kyc_selfie', 'TEXT');
   anadir('kyc_enviado_en', 'INTEGER');
   anadir('kyc_revisado_en', 'INTEGER');
+  anadir('victorias', 'INTEGER NOT NULL DEFAULT 0');
+  anadir('derrotas', 'INTEGER NOT NULL DEFAULT 0');
+  anadir('racha', 'INTEGER NOT NULL DEFAULT 0');
+  anadir('foto', 'TEXT');
 
   // Unicidad de email y teléfono (índices parciales para permitir NULL).
   db.exec(`
@@ -82,6 +86,10 @@ export function inicializarEsquema(db: Db): void {
       kyc_revisado_en INTEGER,
       color TEXT NOT NULL DEFAULT '#006c49',
       saldo INTEGER NOT NULL DEFAULT 1000,
+      victorias INTEGER NOT NULL DEFAULT 0,
+      derrotas INTEGER NOT NULL DEFAULT 0,
+      racha INTEGER NOT NULL DEFAULT 0,
+      foto TEXT,
       creado_en INTEGER NOT NULL
     );
 
@@ -209,4 +217,20 @@ export function listarTransacciones(db: Db, usuarioId: number, limite = 100): un
 export function crearNotificacion(db: Db, usuarioId: number, titulo: string, cuerpo: string): void {
   db.prepare('INSERT INTO notificaciones (usuario_id, titulo, cuerpo, creado_en) VALUES (?, ?, ?, ?)')
     .run(usuarioId, titulo, cuerpo, ahora());
+}
+
+// Racha de victorias consecutivas de un usuario.
+export function obtenerRacha(db: Db, usuarioId: number): number {
+  const fila = db.prepare('SELECT racha FROM usuarios WHERE id = ?').get(usuarioId) as { racha: number } | undefined;
+  return fila?.racha ?? 0;
+}
+
+// Registra el resultado de una partida: victoria incrementa la racha,
+// derrota la reinicia.
+export function registrarResultado(db: Db, usuarioId: number, resultado: 'victoria' | 'derrota'): void {
+  if (resultado === 'victoria') {
+    db.prepare('UPDATE usuarios SET victorias = victorias + 1, racha = racha + 1 WHERE id = ?').run(usuarioId);
+  } else {
+    db.prepare('UPDATE usuarios SET derrotas = derrotas + 1, racha = 0 WHERE id = ?').run(usuarioId);
+  }
 }

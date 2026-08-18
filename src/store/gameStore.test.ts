@@ -167,7 +167,7 @@ describe('gameStore', () => {
     const { estado, opciones } = useGameStore.getState();
     expect(opciones.robarPozo).toBe(false);
     expect(estado!.pozo).toHaveLength(0);
-    expect(estado!.jugadores.reduce((acc, j) => acc + j.mano.length, 0)).toBe(28);
+    estado!.jugadores.forEach(j => expect(j.mano).toHaveLength(7));
   });
 
   it('con el robo desactivado no permite robar del pozo', () => {

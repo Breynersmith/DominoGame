@@ -10,6 +10,7 @@ export interface Ficha {
 
 export interface FichaEnTablero extends Ficha {
   rotada: boolean;   // si se colocó invertida (lado2-lado1)
+  jugadorId?: string; // quién colocó la ficha (para colorear el tablero)
 }
 
 export interface Jugador {
@@ -17,6 +18,9 @@ export interface Jugador {
   nombre: string;
   mano: Ficha[];
   esBot?: boolean;
+  color?: string;   // color del jugador (fichas en pantalla de juego)
+  racha?: number;   // racha de victorias consecutivas (solo en línea)
+  foto?: string;    // foto de perfil (data URI, solo en línea)
 }
 
 export interface EstadoPartida {
@@ -39,4 +43,5 @@ export interface Jugada {
 export interface OpcionesPartida {
   robarPozo: boolean;   // si es false, se reparten todas las fichas y se pasa turno
   apuesta?: number;     // créditos que aporta cada jugador (0 o ausente = sin apuesta)
+  fichasPorJugador?: number; // fichas que recibe cada jugador (7 por defecto)
 }
