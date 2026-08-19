@@ -4,7 +4,6 @@ services:
     name: domino-server
     runtime: node
     rootDir: server
-    plan: starter
     buildCommand: npm install && npm run build
     startCommand: npm run start
     healthCheckPath: /health
@@ -13,12 +12,6 @@ services:
         value: "22"
       - key: JWT_SECRET
         generateValue: true
-      - key: DB_PATH
-        value: /var/data/domino.db
-    disk:
-      name: data
-      mountPath: /var/data
-      sizeGB: 1
 
   # Frontend web: export estático de Expo (bundle con la URL del servidor)
   - type: web
