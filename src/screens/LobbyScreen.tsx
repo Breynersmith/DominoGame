@@ -27,7 +27,7 @@ function mapear(sala: SalaApi): SalaMock {
     id: sala.codigo,
     nombre: sala.nombre,
     apuesta: sala.apuesta,
-    jugadores: typeof sala.jugadores === 'number' ? sala.jugadores : sala.jugadores.length,
+    jugadores: sala.jugadores.length,
     max: 4,
     codigo: sala.codigo,
   };

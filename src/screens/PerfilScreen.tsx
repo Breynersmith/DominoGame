@@ -39,6 +39,7 @@ export function PerfilScreen() {
 
         <View style={styles.seccion}>
           <Fila icono="v" label={t('kycTitulo')} onPress={() => irA('kyc')} />
+          <Fila icono="u" label={t('verificarCuenta')} descripcion={perfil?.cuentaVerificada ? t('cuentaVerificada') : t('cuentaNoVerificada')} onPress={() => irA('verificarCuenta')} />
           <Fila icono="$" label={t('metodosPago')} onPress={() => irA('pagos')} />
         </View>
 
@@ -57,13 +58,16 @@ export function PerfilScreen() {
   );
 }
 
-function Fila({ icono, label, onPress }: { icono: string; label: string; onPress: () => void }) {
+function Fila({ icono, label, descripcion, onPress }: { icono: string; label: string; descripcion?: string; onPress: () => void }) {
   return (
     <Pressable style={styles.fila} onPress={onPress}>
       <View style={styles.iconoFila}>
         <Text style={styles.textoIcono}>{icono}</Text>
       </View>
-      <Text style={styles.textoFila}>{label}</Text>
+      <View style={styles.textoContenedor}>
+        <Text style={styles.textoFila}>{label}</Text>
+        {descripcion !== undefined && <Text style={styles.descripcionFila}>{descripcion}</Text>}
+      </View>
       <Text style={styles.chevron}>›</Text>
     </Pressable>
   );
@@ -134,6 +138,14 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  textoContenedor: {
+    flex: 1,
+  },
+  descripcionFila: {
+    color: '#9ca3af',
+    fontSize: 13,
+    marginTop: 2,
   },
   chevron: {
     color: '#9ca3af',

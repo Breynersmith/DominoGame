@@ -1,12 +1,11 @@
-// server/src/auth.ts
+// supabase/functions/_shared/auth.ts
 // Hash de contraseñas, OTP y preguntas de seguridad, verificación del JWT de
-// Supabase Auth y middleware de autenticación.
+// Supabase Auth y resolución del perfil autenticado.
 
-import crypto from 'crypto';
-import { Request, Response, NextFunction } from 'express';
-import bcrypt from 'bcryptjs';
-import { Db } from './db';
-import { verToken } from './supabase';
+import bcrypt from 'npm:bcryptjs@2.4.3';
+import { Conexion } from './db.ts';
+import { verToken } from './supabase.ts';
+import { errorJson, json } from './respuesta.ts';
 
 export interface UsuarioAutenticado {
   id: number;
@@ -79,11 +78,7 @@ export function esMayorDeEdad(fechaNacimiento: string): boolean {
   const mes = Number(m[2]);
   const dia = Number(m[3]);
   const fecha = new Date(anio, mes - 1, dia);
-  if (
-    fecha.getFullYear() !== anio ||
-    fecha.getMonth() !== mes - 1 ||
-    fecha.getDate() !== dia
-  ) {
+  if (fecha.getFullYear() !== anio || fecha.getMonth() !== mes - 1 || fecha.getDate() !== dia) {
     return false;
   }
   const hoy = new Date();
@@ -94,8 +89,13 @@ export function esMayorDeEdad(fechaNacimiento: string): boolean {
   return edad >= EDAD_MINIMA;
 }
 
+// Genera un código OTP de 6 dígitos usando WebCrypto (el servidor Node usaba
+// crypto.randomInt; en Deno/Edge Functions se usa getRandomValues).
 export function generarCodigoOtp(): string {
-  return crypto.randomInt(0, 10 ** OTP_DIGITOS).toString().padStart(OTP_DIGITOS, '0');
+  const arr = new Uint8Array(4);
+  crypto.getRandomValues(arr);
+  const n = ((arr[0]! << 24) | (arr[1]! << 16) | (arr[2]! << 8) | arr[3]!) >>> 0;
+  return (n % 10 ** OTP_DIGITOS).toString().padStart(OTP_DIGITOS, '0');
 }
 
 export function hashOtp(codigo: string): string {
@@ -130,40 +130,36 @@ export function serializarUsuario(fila: {
   };
 }
 
-// Middleware: exige header `Authorization: Bearer <token de Supabase>` y
-// adjunta req.usuario resolviendo el perfil por el `sub` del token.
-export function requiereAuth(db: Db) {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const header = req.headers.authorization;
-      if (!header || !header.startsWith('Bearer ')) {
-        res.status(401).json({ error: 'no_autenticado' });
-        return;
-      }
-      const datos = await verToken(header.slice(7));
-      if (!datos) {
-        res.status(401).json({ error: 'token_invalido' });
-        return;
-      }
-      const fila = await db.one<{
-        id: number;
-        nombre: string;
-        color: string;
-        saldo: number;
-        kyc_estado: string;
-        foto?: string | null;
-      }>(
-        'SELECT id, nombre, color, saldo, kyc_estado, foto_url AS foto FROM perfiles WHERE auth_uid = $1',
-        [datos.uid],
-      );
-      if (!fila) {
-        res.status(401).json({ error: 'usuario_no_existe' });
-        return;
-      }
-      (req as Request & { usuario: UsuarioAutenticado }).usuario = serializarUsuario(fila);
-      next();
-    } catch (e) {
-      next(e as Error);
-    }
-  };
+// Resuelve el perfil a partir del header `Authorization: Bearer <token>`.
+// Devuelve el usuario o una Response de error (401).
+export async function obtenerUsuarioRequerido(
+  req: Request,
+  db: Conexion,
+): Promise<UsuarioAutenticado | Response> {
+  const header = req.headers.get('authorization');
+  if (!header || !header.startsWith('Bearer ')) {
+    return errorJson('no_autenticado', 401);
+  }
+  const datos = await verToken(header.slice(7));
+  if (!datos) {
+    return errorJson('token_invalido', 401);
+  }
+  const fila = await db.one<{
+    id: number;
+    nombre: string;
+    color: string;
+    saldo: number;
+    kyc_estado: string;
+    cuenta_verificada: number;
+    foto?: string | null;
+  }>(
+    'SELECT id, nombre, color, saldo, kyc_estado, cuenta_verificada, foto_url AS foto FROM perfiles WHERE auth_uid = $1',
+    [datos.uid],
+  );
+  if (!fila) {
+    return errorJson('usuario_no_existe', 401);
+  }
+  return serializarUsuario(fila);
 }
+
+export type UsuarioOError = UsuarioAutenticado | Response;

@@ -110,6 +110,7 @@ export const ESQUEMA_SQL = `
     kyc_enviado_en bigint,
     kyc_revisado_en bigint,
     color text not null default '#006c49',
+    cuenta_verificada integer not null default 0,
     saldo integer not null default 1000,
     victorias integer not null default 0,
     derrotas integer not null default 0,
@@ -123,7 +124,8 @@ export const ESQUEMA_SQL = `
 
   create table if not exists public.codigos_otp (
     id bigserial primary key,
-    telefono text not null,
+    telefono text not null default '',
+    email text,
     codigo_hash text not null,
     verificado integer not null default 0,
     consumido integer not null default 0,
@@ -194,6 +196,10 @@ export const ESQUEMA_SQL = `
     creado_en bigint not null,
     primary key (sala_id, usuario_id)
   );
+
+  alter table public.perfiles add column if not exists cuenta_verificada integer not null default 0;
+
+  alter table public.codigos_otp add column if not exists email text;
 `;
 
 export async function inicializarEsquema(db: Conexion): Promise<void> {

@@ -25,6 +25,7 @@ import { SetupScreen } from './src/screens/SetupScreen';
 import { TerminosScreen } from './src/screens/TerminosScreen';
 import { KycScreen } from './src/screens/KycScreen';
 import { PagosScreen } from './src/screens/PagosScreen';
+import { VerificarCuentaScreen } from './src/screens/VerificarCuentaScreen';
 import { useAppStore } from './src/store/appStore';
 import { useGameStore } from './src/store/gameStore';
 import { useOnlineStore } from './src/store/onlineStore';
@@ -113,6 +114,9 @@ export default function App() {
       break;
     case 'kyc':
       pantalla = <KycScreen />;
+      break;
+    case 'verificarCuenta':
+      pantalla = <VerificarCuentaScreen />;
       break;
     case 'pagos':
       pantalla = <PagosScreen />;

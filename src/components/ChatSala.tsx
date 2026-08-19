@@ -82,7 +82,7 @@ export function ChatSala({ visible, onCerrar }: Props) {
             renderItem={({ item }) => (
               <View style={styles.fila}>
                 <Avatar
-                  foto={item.foto}
+                  foto={item.foto ?? undefined}
                   color={item.color}
                   nombre={item.nombre}
                   tamano={34}

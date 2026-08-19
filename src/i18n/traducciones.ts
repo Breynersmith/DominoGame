@@ -269,6 +269,15 @@ export interface Traducciones {
   chatVacio: string;
   chatDemasiadoRapido: string;
   mensajeInvalido: string;
+  verificarCuenta: string;
+  cuentaVerificada: string;
+  cuentaNoVerificada: string;
+  verificarCuentaDesc: string;
+  recargaRequiereVerificacion: string;
+  cuentaVerificadaExito: string;
+  cuentaVerificacionError: string;
+  codigoEnviadoEmail: string;
+  registrar: string;
 }
 
 const es: Traducciones = {
@@ -368,7 +377,7 @@ const es: Traducciones = {
   idiomaCat: 'Català',
   iniciarSesion: 'Iniciar Sesión',
   usuario: 'Usuario',
-  contrasena: 'Código',
+  contrasena: 'Contraseña',
   olvidasteContrasena: '¿Olvidaste tu código?',
   noTienesCuenta: '¿No tienes cuenta?',
   crearCuentaLink: 'Créala aquí',
@@ -540,6 +549,15 @@ const es: Traducciones = {
   chatVacio: 'Sin mensajes todavía. ¡Sé el primero en saludar!',
   chatDemasiadoRapido: 'Espera un momento antes de enviar otro mensaje',
   mensajeInvalido: 'El mensaje no es válido',
+  verificarCuenta: 'Verificar cuenta',
+  cuentaVerificada: 'Cuenta verificada',
+  cuentaNoVerificada: 'Cuenta sin verificar',
+  verificarCuentaDesc: 'Completa tus datos personales y de seguridad para poder recargar dinero real.',
+  recargaRequiereVerificacion: 'Verifica tu cuenta para poder recargar saldo',
+  cuentaVerificadaExito: '¡Tu cuenta ha sido verificada!',
+  cuentaVerificacionError: 'No se pudo verificar la cuenta. Revisa los datos e inténtalo de nuevo.',
+  codigoEnviadoEmail: 'Te enviamos un código de verificación a tu correo electrónico. Revísalo e introdúcelo para completar el registro.',
+  registrar: 'Registrar',
 };
 
 const en: Traducciones = {
@@ -639,7 +657,7 @@ const en: Traducciones = {
   idiomaCat: 'Catalan',
   iniciarSesion: 'Sign in',
   usuario: 'Username',
-  contrasena: 'Code',
+  contrasena: 'Password',
   olvidasteContrasena: 'Forgot your code?',
   noTienesCuenta: "Don't have an account?",
   crearCuentaLink: 'Create one here',
@@ -811,6 +829,15 @@ const en: Traducciones = {
   chatVacio: 'No messages yet. Be the first to say hi!',
   chatDemasiadoRapido: 'Wait a moment before sending another message',
   mensajeInvalido: 'The message is not valid',
+  verificarCuenta: 'Verify account',
+  cuentaVerificada: 'Account verified',
+  cuentaNoVerificada: 'Account not verified',
+  verificarCuentaDesc: 'Complete your personal and security details to be able to recharge real money.',
+  recargaRequiereVerificacion: 'Verify your account to recharge balance',
+  cuentaVerificadaExito: 'Your account has been verified!',
+  cuentaVerificacionError: 'Could not verify the account. Check the details and try again.',
+  codigoEnviadoEmail: 'We sent a verification code to your email. Check it and enter it to complete your registration.',
+  registrar: 'Sign up',
 };
 
 const cat: Traducciones = {
@@ -910,7 +937,7 @@ const cat: Traducciones = {
   idiomaCat: 'Català',
   iniciarSesion: 'Iniciar sessió',
   usuario: 'Usuari',
-  contrasena: 'Codi',
+  contrasena: 'Contrasenya',
   olvidasteContrasena: "Has oblidat el teu codi?",
   noTienesCuenta: 'No tens compte?',
   crearCuentaLink: 'Crea-la aquí',
@@ -1082,6 +1109,15 @@ const cat: Traducciones = {
   chatVacio: 'Encara no hi ha missatges. Sigues el primer a saludar!',
   chatDemasiadoRapido: 'Espera un moment abans d\'enviar un altre missatge',
   mensajeInvalido: 'El missatge no és vàlid',
+  verificarCuenta: 'Verificar el compte',
+  cuentaVerificada: 'Compte verificat',
+  cuentaNoVerificada: 'Compte sense verificar',
+  verificarCuentaDesc: 'Completa les teves dades personals i de seguretat per poder recarregar diners reals.',
+  recargaRequiereVerificacion: 'Verifica el teu compte per poder recarregar saldo',
+  cuentaVerificadaExito: 'El teu compte s\'ha verificat!',
+  cuentaVerificacionError: 'No s\'ha pogut verificar el compte. Revisa les dades i torna-ho a provar.',
+  codigoEnviadoEmail: 'T\'hem enviat un codi de verificació al teu correu electrònic. Revisa\'l i introdueix-lo per completar el registre.',
+  registrar: 'Registrar',
 };
 
 export const TRADUCCIONES: Record<Idioma, Traducciones> = { es, en, cat };

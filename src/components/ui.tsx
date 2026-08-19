@@ -86,15 +86,22 @@ export function BotonSecundario({
   label,
   onPress,
   icono,
+  disabled = false,
 }: {
   label: string;
   onPress: () => void;
   icono?: ReactNode;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [styles.botonSecundario, pressed && styles.presionado]}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.botonSecundario,
+        pressed && styles.presionado,
+        disabled && styles.deshabilitado,
+      ]}
     >
       {icono}
       <Text style={styles.textoSecundario}>{label}</Text>

@@ -8,8 +8,8 @@ import { Db, ahora } from '../db';
 import { admin, anon } from '../supabase';
 import {
   hashOtp,
-  hashPassword,
   hashRespuestaSeguridad,
+  requiereAuth,
   esEmailValido,
   esMayorDeEdad,
   esPasswordFuerte,
@@ -84,6 +84,33 @@ async function registrarOtp(db: Db, telefono: string): Promise<string> {
   return codigo;
 }
 
+async function registrarOtpEmail(db: Db, email: string): Promise<string> {
+  const codigo = generarCodigoOtp();
+  await db.ejecutar(
+    'INSERT INTO codigos_otp (telefono, email, codigo_hash, expira_en, creado_en) VALUES ($1, $2, $3, $4, $5)',
+    ['', email, hashOtp(codigo), ahora() + OTP_VALIDEZ_MS, ahora()],
+  );
+  return codigo;
+}
+
+// Verifica un código OTP enviado por correo y lo consume si es válido.
+async function verificarYConsumirOtpEmail(
+  db: Db,
+  email: string,
+  codigo: string,
+): Promise<'ok' | 'invalido' | 'expirado'> {
+  const fila = await db.one<{ id: number; codigo_hash: string; consumido: number; expira_en: number }>(
+    'SELECT id, codigo_hash, consumido, expira_en FROM codigos_otp WHERE email = $1 ORDER BY id DESC LIMIT 1',
+    [email],
+  );
+  if (!fila) return 'invalido';
+  if (fila.consumido === 1) return 'invalido';
+  if (ahora() > fila.expira_en) return 'expirado';
+  if (!verificarOtp(codigo, fila.codigo_hash)) return 'invalido';
+  await db.ejecutar('UPDATE codigos_otp SET consumido = 1 WHERE id = $1', [fila.id]);
+  return 'ok';
+}
+
 // Verifica un código OTP para un teléfono y lo consume si es válido.
 async function verificarYConsumirOtp(
   db: Db,
@@ -116,14 +143,14 @@ async function crearCuenta(
     nombre: string;
     nombreCompleto: string;
     email: string;
-    telefono: string;
+    telefono: string | null;
     password: string;
     color: string;
     fechaNacimiento: string;
     pais: string;
     terminosAceptadosEn: number;
-    preguntaSeguridad: string;
-    respuestaSeguridad: string;
+    preguntaSeguridad: string | null;
+    respuestaSeguridad: string | null;
     dosFactores: number;
   },
 ): Promise<{ token: string; usuario: UsuarioAutenticado } | null> {
@@ -171,7 +198,7 @@ async function crearCuenta(
       datos.pais,
       datos.terminosAceptadosEn,
       datos.preguntaSeguridad,
-      hashRespuestaSeguridad(datos.respuestaSeguridad),
+      datos.respuestaSeguridad ? hashRespuestaSeguridad(datos.respuestaSeguridad) : null,
       datos.dosFactores,
       datos.color,
       1000,
@@ -518,6 +545,176 @@ export function crearRouterAuth(db: Db): Router {
       }
       const fila = await cargarPerfil(db, perfil.id);
       res.json({ token: sesion.data.session.access_token, usuario: fila ? serializarUsuario(fila) : undefined });
+    }),
+  );
+
+  // POST /auth/email/enviar { email } → genera y envía un OTP por correo.
+  r.post(
+    '/email/enviar',
+    limitador({ clave: 'email-enviar', ventanaMs: 60 * 1000, max: 3 }),
+    asyncero(async (req: Request, res: Response): Promise<void> => {
+      const email = String(req.body?.email ?? '').trim().toLowerCase();
+      if (!esEmailValido(email)) {
+        res.status(400).json({ error: 'email_invalido' });
+        return;
+      }
+      const codigo = await registrarOtpEmail(db, email);
+      // TODO: integración con el proveedor de correo.
+      console.log(`[email] ${email}: ${codigo}`);
+      res.json({ ok: true, demo: !process.env.SMS_PROVIDER, codigo: process.env.SMS_PROVIDER ? undefined : codigo });
+    }),
+  );
+
+  // POST /auth/registro-facil { nombre, email, password, codigoOtp, color? }
+  // Registro rápido: nombre + email + contraseña y verificación del código de
+  // correo. El resto de datos de seguridad se piden después mediante
+  // POST /auth/verificar-cuenta.
+  r.post(
+    '/registro-facil',
+    limitador({ clave: 'registro-facil', ventanaMs: 60 * 1000, max: 10 }),
+    asyncero(async (req: Request, res: Response): Promise<void> => {
+      const nombre = String(req.body?.nombre ?? '').trim();
+      const email = String(req.body?.email ?? '').trim().toLowerCase();
+      const password = String(req.body?.password ?? '');
+      const codigoOtp = String(req.body?.codigoOtp ?? '');
+      const color =
+        typeof req.body?.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(req.body.color)
+          ? req.body.color
+          : '#006c49';
+
+      if (nombre.length < 2 || nombre.length > NOMBRE_MAX) {
+        res.status(400).json({ error: 'nombre_invalido' });
+        return;
+      }
+      if (!esEmailValido(email)) {
+        res.status(400).json({ error: 'email_invalido' });
+        return;
+      }
+      if (!esPasswordFuerte(password)) {
+        res.status(400).json({ error: 'password_debil' });
+        return;
+      }
+      if (await db.one('SELECT 1 FROM perfiles WHERE LOWER(email) = LOWER($1)', [email])) {
+        res.status(409).json({ error: 'email_en_uso' });
+        return;
+      }
+
+      const otpResultado = await verificarYConsumirOtpEmail(db, email, codigoOtp);
+      if (otpResultado === 'invalido') {
+        res.status(400).json({ error: 'otp_invalido' });
+        return;
+      }
+      if (otpResultado === 'expirado') {
+        res.status(400).json({ error: 'otp_expirado' });
+        return;
+      }
+
+      await crearCuenta(db, res, {
+        nombre,
+        nombreCompleto: nombre,
+        email,
+        telefono: null,
+        password,
+        color,
+        fechaNacimiento: '',
+        pais: '',
+        terminosAceptadosEn: 0,
+        preguntaSeguridad: null,
+        respuestaSeguridad: null,
+        dosFactores: 0,
+      });
+    }),
+  );
+
+  // POST /auth/verificar-cuenta (requiere token)
+  // Completa los datos de seguridad del perfil: nombre completo, teléfono
+  // (verificado por SMS), fecha de nacimiento, país, términos, pregunta de
+  // seguridad y 2FA. Marca la cuenta como verificada.
+  r.post(
+    '/verificar-cuenta',
+    requiereAuth(db),
+    limitador({ clave: 'verificar-cuenta', ventanaMs: 60 * 1000, max: 5 }),
+    asyncero(async (req: Request, res: Response): Promise<void> => {
+      const u = (req as Request & { usuario: UsuarioAutenticado }).usuario;
+      const nombreCompleto = String(req.body?.nombreCompleto ?? '').trim();
+      const telefono = String(req.body?.telefono ?? '').trim();
+      const codigoOtp = String(req.body?.codigoOtp ?? '');
+      const fechaNacimiento = String(req.body?.fechaNacimiento ?? '');
+      const pais = String(req.body?.pais ?? '').trim();
+      const terminosAceptados = req.body?.terminosAceptados === true;
+      const preguntaSeguridad = String(req.body?.preguntaSeguridad ?? '');
+      const respuestaSeguridad = String(req.body?.respuestaSeguridad ?? '');
+      const dosFactores = req.body?.dosFactores === true ? 1 : 0;
+
+      if (nombreCompleto.length < 2) {
+        res.status(400).json({ error: 'nombre_completo_invalido' });
+        return;
+      }
+      if (!esTelefonoValido(telefono)) {
+        res.status(400).json({ error: 'telefono_invalido' });
+        return;
+      }
+      if (!esMayorDeEdad(fechaNacimiento)) {
+        res.status(400).json({ error: 'menor_de_edad' });
+        return;
+      }
+      if (pais.length < 2) {
+        res.status(400).json({ error: 'pais_requerido' });
+        return;
+      }
+      if (!terminosAceptados) {
+        res.status(400).json({ error: 'terminos_no_aceptados' });
+        return;
+      }
+      if (!esPreguntaSeguridadValida(preguntaSeguridad)) {
+        res.status(400).json({ error: 'pregunta_seguridad_invalida' });
+        return;
+      }
+      if (!esRespuestaSeguridadValida(respuestaSeguridad)) {
+        res.status(400).json({ error: 'respuesta_seguridad_invalida' });
+        return;
+      }
+
+      const telefonoEnUso = await db.one(
+        'SELECT 1 FROM perfiles WHERE telefono = $1 AND id != $2',
+        [telefono, u.id],
+      );
+      if (telefonoEnUso) {
+        res.status(409).json({ error: 'telefono_en_uso' });
+        return;
+      }
+
+      const otpResultado = await verificarYConsumirOtp(db, telefono, codigoOtp);
+      if (otpResultado === 'invalido') {
+        res.status(400).json({ error: 'otp_invalido' });
+        return;
+      }
+      if (otpResultado === 'expirado') {
+        res.status(400).json({ error: 'otp_expirado' });
+        return;
+      }
+
+      await db.ejecutar(
+        `UPDATE perfiles SET
+           nombre_completo = $1, telefono = $2, fecha_nacimiento = $3, pais = $4,
+           terminos_aceptados_en = $5, pregunta_seguridad = $6, respuesta_seguridad_hash = $7,
+           dos_factores = $8, cuenta_verificada = 1
+         WHERE id = $9`,
+        [
+          nombreCompleto,
+          telefono,
+          fechaNacimiento,
+          pais,
+          ahora(),
+          preguntaSeguridad,
+          hashRespuestaSeguridad(respuestaSeguridad),
+          dosFactores,
+          u.id,
+        ],
+      );
+
+      const fila = await cargarPerfil(db, u.id);
+      res.json({ usuario: fila ? serializarUsuario(fila) : undefined });
     }),
   );
 

@@ -1,11 +1,25 @@
 // src/store/onlineStore.ts
-// Estado de las partidas en línea: conexión Socket.IO, sala y partida en tiempo real.
+// Estado de las partidas en línea: Edge Functions (REST) + Supabase Realtime.
+// El estado vive en Postgres (`salas`, `partidas`, `chat_mensajes`); los
+// clientes envían acciones por HTTP y reciben los cambios por `postgres_changes`.
 
 import { create } from 'zustand';
-import { io, Socket } from 'socket.io-client';
-import { API_BASE_URL } from '../services/api';
+import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
 import { EstadoPartida } from '../game/types';
 import { useAppStore } from './appStore';
+import {
+  apiAbandonarPartida,
+  apiEmpezarPartida,
+  apiEnviarChat,
+  apiEsperar,
+  apiJugar,
+  apiObtenerSala,
+  apiPasar,
+  apiRobar,
+  apiSalirSala,
+  apiUnirseSala,
+  ErrorApi,
+} from '../services/api';
 
 export interface JugadorOnline {
   id: number;
@@ -13,7 +27,7 @@ export interface JugadorOnline {
   color: string;
   esBot?: boolean;
   orden?: number;
-  foto?: string;
+  foto?: string | null;
 }
 
 export interface MensajeChat {
@@ -21,7 +35,7 @@ export interface MensajeChat {
   usuarioId: number;
   nombre: string;
   color: string;
-  foto?: string;
+  foto?: string | null;
   texto: string;
   ts: number;
 }
@@ -41,6 +55,27 @@ export type FaseOnline = 'desconectado' | 'espera' | 'jugando' | 'terminado';
 export interface PagoOnline {
   tipo: 'ganancia' | 'reembolso' | 'perdida';
   monto: number;
+}
+
+interface PartidaFila {
+  codigo: string;
+  opciones: { robarPozo: boolean; fichasPorJugador: number };
+  estado: EstadoPartida;
+  jugadores: { usuarioId: number; nombre: string; color: string; esBot: boolean; foto?: string }[];
+  apuesta: number;
+  pagada: number;
+  humanos_inicio: number;
+  resultado: { pot: number; pagos: Record<number, PagoOnline>; motivo?: string } | null;
+}
+
+interface SalaFila {
+  codigo: string;
+  nombre: string;
+  apuesta: number;
+  host_id: number;
+  estado: string;
+  snapshot: SalaSnapshot | null;
+  aviso: { tipo: string; jugador: { id: number; nombre: string } } | null;
 }
 
 interface OnlineStore {
@@ -77,19 +112,197 @@ interface OnlineStore {
   reset: () => void;
 }
 
-let socket: Socket | null = null;
-let socketToken: string | null = null;
+let cliente: SupabaseClient | null = null;
+let canal: RealtimeChannel | null = null;
 
-function emitir(evento: string, ...args: unknown[]): void {
-  socket?.emit(evento as never, ...(args as never[]));
+function obtenerCliente(): SupabaseClient | null {
+  const token = useAppStore.getState().token;
+  if (!token) return null;
+  const url = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+  const anon = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
+  if (!url || !anon) return null;
+  // Cliente nuevo por sesión: el token se inyecta en las cabeceras para que
+  // Realtime y las funciones autoricen con la identidad actual.
+  cliente = createClient(url, anon, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  return cliente;
+}
+
+function suscribir(codigo: string): void {
+  if (canal) {
+    void canal.unsubscribe();
+    canal = null;
+  }
+  const c = cliente;
+  if (!c) return;
+  canal = c
+    .channel(`sala:${codigo}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'salas', filter: `codigo=eq.${codigo}` },
+      (payload) => manejarEventoSala(payload),
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'partidas', filter: `codigo=eq.${codigo}` },
+      (payload) => manejarEventoPartida(payload),
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'chat_mensajes', filter: `sala_id=eq.${codigo}` },
+      (payload) => manejarEventoChat(payload),
+    );
+  canal.subscribe((status) => {
+    if (status === 'SUBSCRIBED') useOnlineStore.setState({ conectado: true });
+  });
+}
+
+function manejarEventoSala(payload: {
+  eventType: string;
+  new: Partial<SalaFila>;
+  old: Partial<SalaFila>;
+}): void {
+  if (payload.eventType === 'DELETE') {
+    useOnlineStore.getState().reset();
+    return;
+  }
+  const fila = payload.new as SalaFila;
+  const snapshot = fila.snapshot;
+  if (!snapshot) return;
+  const uidActual = useAppStore.getState().perfil?.id;
+  useOnlineStore.setState((s) => {
+    const cambios: Partial<OnlineStore> = {
+      sala: snapshot,
+      esHost: snapshot.hostId === uidActual,
+      apuesta: snapshot.apuesta,
+      fase: snapshot.partida?.empezada ? 'jugando' : s.fase === 'terminado' ? 'terminado' : 'espera',
+    };
+    if (fila.aviso?.tipo === 'jugador_abandono') {
+      cambios.abandono = fila.aviso.jugador;
+      cambios.esperando = false;
+    }
+    return cambios;
+  });
+}
+
+function manejarEventoPartida(payload: {
+  eventType: string;
+  new: Partial<PartidaFila>;
+  old: Partial<PartidaFila>;
+}): void {
+  const fila = payload.new as PartidaFila;
+  if (!fila?.codigo) return;
+  const uidActual = useAppStore.getState().perfil?.id;
+
+  if (payload.eventType === 'INSERT') {
+    const orden = fila.jugadores.findIndex((j) => j.usuarioId === uidActual);
+    useOnlineStore.setState({
+      fase: 'jugando',
+      estado: fila.estado,
+      robarPozo: fila.opciones.robarPozo,
+      fichasPorJugador: fila.opciones.fichasPorJugador ?? 7,
+      apuesta: fila.apuesta,
+      miOrden: orden >= 0 ? orden : null,
+      miEsTurno: orden >= 0 ? fila.estado.turnoActual === orden : false,
+      pago: null,
+      mensaje: null,
+      abandono: null,
+      esperando: false,
+    });
+    return;
+  }
+
+  if (fila.pagada === 1) {
+    const resultado = fila.resultado;
+    useOnlineStore.setState((s) => ({
+      estado: fila.estado ?? s.estado,
+      pot: resultado?.pot ?? s.pot,
+      pago: uidActual !== undefined && resultado?.pagos ? resultado.pagos[uidActual] ?? null : null,
+      fase: 'terminado',
+      abandono: null,
+      esperando: false,
+      terminadaPorAbandono: resultado?.motivo === 'abandono',
+    }));
+    return;
+  }
+
+  useOnlineStore.setState((s) => ({
+    estado: fila.estado ?? s.estado,
+    miEsTurno: s.miOrden !== null ? fila.estado.turnoActual === s.miOrden : false,
+  }));
+}
+
+function manejarEventoChat(payload: {
+  eventType: string;
+  new: Partial<{
+    id: number;
+    sala_id: string;
+    usuario_id: number;
+    nombre: string;
+    color: string;
+    foto: string | null;
+    texto: string;
+    ts: number;
+  }>;
+}): void {
+  if (payload.eventType !== 'INSERT') return;
+  const fila = payload.new;
+  if (!fila?.id) return;
+  useOnlineStore.setState((s) => ({
+    chatMensajes: [
+      ...s.chatMensajes,
+      {
+        id: fila.id!,
+        usuarioId: fila.usuario_id!,
+        nombre: fila.nombre ?? '',
+        color: fila.color ?? '#2563eb',
+        foto: fila.foto ?? undefined,
+        texto: fila.texto ?? '',
+        ts: fila.ts ?? 0,
+      },
+    ].slice(-100),
+    chatError: null,
+  }));
+}
+
+function codigoError(e: unknown): string {
+  return e instanceof ErrorApi ? e.codigo : 'error_interno';
+}
+
+// Re-sincroniza sala + partida desde el servidor. Se usa al empezar (por si el
+// canal de Realtime aún no está suscrito y se pierde el INSERT de `partidas`).
+function sincronizarPartida(codigo: string): void {
+  void apiObtenerSala(codigo)
+    .then(r => {
+      if (!r.partida) return;
+      const uidActual = useAppStore.getState().perfil?.id;
+      const idx = r.partida.jugadores.findIndex(j => j.usuarioId === uidActual);
+      const estado = r.partida.estado as EstadoPartida;
+      useOnlineStore.setState({
+        sala: r.sala,
+        esHost: r.sala.hostId === uidActual,
+        apuesta: r.partida.apuesta,
+        estado,
+        robarPozo: r.partida.opciones.robarPozo,
+        fichasPorJugador: r.partida.opciones.fichasPorJugador,
+        miOrden: idx >= 0 ? idx : null,
+        miEsTurno: idx >= 0 ? estado.turnoActual === idx : false,
+        fase: 'jugando',
+        pago: null,
+        mensaje: null,
+        abandono: null,
+        esperando: false,
+      });
+    })
+    .catch(() => {});
 }
 
 export const useOnlineStore = create<OnlineStore>()((set, get) => {
-  const actualizarEstado = (estado: EstadoPartida) =>
-    set(s => ({ estado, miEsTurno: estado.turnoActual === s.miOrden }));
-
   const reiniciarSala = () =>
     set({
+      conectado: false,
       fase: 'desconectado',
       sala: null,
       estado: null,
@@ -133,178 +346,155 @@ export const useOnlineStore = create<OnlineStore>()((set, get) => {
       const token = useAppStore.getState().token;
       const uid = useAppStore.getState().perfil?.id;
       if (!token || uid === undefined) return false;
-
-      // Si existe un socket de una sesión anterior con otro token (p. ej. tras
-      // cerrar sesión e iniciar con otra cuenta), se descarta para que la sala
-      // se cree y se administre con la identidad actual.
-      if (socket && socketToken !== token) {
-        socket.removeAllListeners();
-        socket.disconnect();
-        socket = null;
-        socketToken = null;
-        reiniciarSala();
+      if (cliente) {
+        // Recargar identidad: en la sala actual se re-suscribe con el token nuevo.
+        cliente = null;
+        if (canal) {
+          void canal.unsubscribe();
+          canal = null;
+        }
       }
-
-      if (socket) return true;
-
-      socket = io(API_BASE_URL, {
-        auth: { token },
-        transports: ['websocket'],
-      });
-      socketToken = token;
-
-      socket.on('connect', () => {
-        set({ conectado: true });
-        // Tras una reconexión (p. ej. reinicio del servidor) se vuelve a
-        // entrar a la sala en la que el jugador estaba.
-        const codigo = get().sala?.codigo;
-        if (codigo) emitir('sala:unirse', codigo);
-      });
-
-      socket.on('sala:actualizada', (snapshot: SalaSnapshot) => {
-        const uidActual = useAppStore.getState().perfil?.id;
-        set(s => ({
-          sala: snapshot,
-          esHost: snapshot.hostId === uidActual,
-          fase: snapshot.partida?.empezada ? 'jugando' : s.fase === 'terminado' ? 'terminado' : 'espera',
-          apuesta: snapshot.apuesta,
-        }));
-      });
-
-      socket.on('partida:empezada', (datos: { jugadores: JugadorOnline[]; opciones: { robarPozo: boolean; fichasPorJugador?: number }; apuesta: number }) => {
-        const uidActual = useAppStore.getState().perfil?.id;
-        set({
-          fase: 'jugando',
-          robarPozo: datos.opciones.robarPozo,
-          fichasPorJugador: datos.opciones.fichasPorJugador ?? 7,
-          apuesta: datos.apuesta,
-          miOrden: datos.jugadores.find(j => j.id === uidActual)?.orden ?? null,
-          pago: null,
-          mensaje: null,
-        });
-      });
-
-      socket.on('partida:estado', (datos: { estado: EstadoPartida }) => {
-        actualizarEstado(datos.estado);
-      });
-
-      socket.on('partida:terminada', (datos: { estado: EstadoPartida; apuesta: number; pot: number; pagos: Record<number, PagoOnline>; motivo?: string }) => {
-        const uidActual = useAppStore.getState().perfil?.id;
-        actualizarEstado(datos.estado);
-        set({
-          pot: datos.pot,
-          pago: uidActual !== undefined ? datos.pagos[uidActual] ?? null : null,
-          fase: 'terminado',
-          abandono: null,
-          esperando: false,
-          terminadaPorAbandono: datos.motivo === 'abandono',
-        });
-      });
-
-      socket.on('partida:jugador_abandono', (datos: { jugador: { id: number; nombre: string } }) => {
-        set({ abandono: datos.jugador, esperando: false });
-      });
-
-      socket.on('partida:reanudada', () => {
-        set({ abandono: null, esperando: false });
-      });
-
-      socket.on('sala:error', (datos: { error: string }) => {
-        set({ mensaje: datos.error });
-      });
-
-      socket.on('chat:historial', (datos: { mensajes: MensajeChat[] }) => {
-        set({ chatMensajes: datos.mensajes ?? [] });
-      });
-
-      socket.on('chat:mensaje', (datos: { mensaje: MensajeChat }) => {
-        set(s => ({
-          chatMensajes: [...s.chatMensajes, datos.mensaje].slice(-100),
-          chatError: null,
-        }));
-      });
-
-      socket.on('chat:error', (datos: { error: string }) => {
-        set({ chatError: datos.error });
-      });
-
-      socket.on('disconnect', () => {
-        // No se borra la sala: si es una caída temporal de la conexión (reinicio
-        // del servidor, cambio de red) el cliente se reconecta y se re-une solo.
-        set({ conectado: false });
-      });
-
+      obtenerCliente();
+      const codigo = get().sala?.codigo;
+      if (codigo) suscribir(codigo);
       return true;
     },
 
     desconectar: () => {
-      socket?.disconnect();
-      socket = null;
-      socketToken = null;
+      if (canal) {
+        void canal.unsubscribe();
+        canal = null;
+      }
+      cliente = null;
       reiniciarSala();
     },
 
     unirseSala: codigo => {
-      if (!get().conectado) get().conectarse();
-      // Al unirse se vuelve a la fase de espera (evita quedarse con la pantalla
-      // de una partida anterior terminada).
+      const uidActual = useAppStore.getState().perfil?.id;
+      if (uidActual === undefined) return;
       set({ mensaje: null, pago: null, fase: 'espera' });
-      emitir('sala:unirse', codigo.trim().toUpperCase());
+      const codigoLimpio = codigo.trim().toUpperCase();
+      void apiUnirseSala(codigoLimpio)
+        .then(r => {
+          const snapshot = r.sala;
+          set({
+            conectado: true,
+            sala: snapshot,
+            esHost: snapshot.hostId === uidActual,
+            apuesta: snapshot.apuesta,
+            chatMensajes: r.chat ?? [],
+            fase: snapshot.partida?.empezada ? 'jugando' : 'espera',
+          });
+          if (r.partida) {
+            const idx = r.partida.jugadores.findIndex(j => j.usuarioId === uidActual);
+            set({
+              estado: r.partida.estado as EstadoPartida,
+              robarPozo: r.partida.opciones.robarPozo,
+              fichasPorJugador: r.partida.opciones.fichasPorJugador,
+              apuesta: r.partida.apuesta,
+              miOrden: idx >= 0 ? idx : null,
+              miEsTurno: idx >= 0 ? (r.partida.estado as EstadoPartida).turnoActual === idx : false,
+            });
+          }
+          suscribir(snapshot.codigo);
+        })
+        .catch(e => {
+          set({ mensaje: codigoError(e) });
+        });
     },
 
     salirSala: () => {
-      emitir('sala:salir');
+      const codigo = get().sala?.codigo;
+      if (codigo) void apiSalirSala(codigo).catch(() => {});
+      if (canal) {
+        void canal.unsubscribe();
+        canal = null;
+      }
       reiniciarSala();
     },
 
     actualizarPerfil: () => {
-      emitir('sala:actualizar_perfil');
+      const codigo = get().sala?.codigo;
+      if (!codigo) return;
+      void apiUnirseSala(codigo)
+        .then(r => {
+          const uidActual = useAppStore.getState().perfil?.id;
+          set(s => ({
+            sala: r.sala,
+            esHost: r.sala.hostId === uidActual,
+            chatMensajes: r.chat ?? s.chatMensajes,
+          }));
+        })
+        .catch(() => {});
     },
 
     empezar: () => {
       const codigo = get().sala?.codigo;
       if (!codigo) return;
-      emitir('sala:empezar', { codigo, robarPozo: get().robarPozo, fichasPorJugador: get().fichasPorJugador });
+      set({ mensaje: null });
+      void apiEmpezarPartida(codigo, get().robarPozo, get().fichasPorJugador)
+        .then(() => sincronizarPartida(codigo))
+        .catch(e => {
+          set({ mensaje: codigoError(e) });
+        });
     },
 
     jugar: (fichaId, extremo) => {
       const codigo = get().sala?.codigo;
       if (!codigo || !get().miEsTurno) return;
-      emitir('partida:jugar', { codigo, fichaId, extremo });
+      void apiJugar(codigo, fichaId, extremo).catch(e => {
+        set({ mensaje: codigoError(e) });
+      });
     },
 
     robar: () => {
       const codigo = get().sala?.codigo;
       if (!codigo || !get().miEsTurno) return;
-      emitir('partida:robar', { codigo });
+      void apiRobar(codigo).catch(e => {
+        set({ mensaje: codigoError(e) });
+      });
     },
 
     pasar: () => {
       const codigo = get().sala?.codigo;
       if (!codigo || !get().miEsTurno) return;
-      emitir('partida:pasar', { codigo });
+      void apiPasar(codigo).catch(e => {
+        set({ mensaje: codigoError(e) });
+      });
     },
 
     esperar: () => {
       const codigo = get().sala?.codigo;
       if (!codigo) return;
-      emitir('partida:esperar', { codigo });
+      void apiEsperar(codigo).catch(() => {});
       set({ abandono: null, esperando: true });
     },
 
     abandonarPartida: () => {
       const codigo = get().sala?.codigo;
       if (!codigo) return;
-      emitir('partida:abandonar', { codigo });
+      void apiAbandonarPartida(codigo)
+        .then(() => {
+          if (canal) {
+            void canal.unsubscribe();
+            canal = null;
+          }
+          reiniciarSala();
+        })
+        .catch(e => {
+          set({ mensaje: codigoError(e) });
+        });
     },
 
     enviarChat: texto => {
       const codigo = get().sala?.codigo;
-      if (!codigo || !get().conectado) return;
+      if (!codigo) return;
       const limpio = texto.trim();
       if (!limpio || limpio.length > 300) return;
       set({ chatError: null });
-      emitir('chat:enviar', { codigo, texto: limpio });
+      void apiEnviarChat(codigo, limpio).catch(e => {
+        set({ chatError: codigoError(e) });
+      });
     },
 
     reset: reiniciarSala,

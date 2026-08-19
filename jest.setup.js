@@ -14,13 +14,17 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 // cae al modo local (retroceso offline).
 global.fetch = jest.fn(() => Promise.reject(new Error('sin red en tests')));
 
-jest.mock('socket.io-client', () => {
-  const socket = {
-    on: jest.fn(),
-    emit: jest.fn(),
-    disconnect: jest.fn(),
+jest.mock('@supabase/supabase-js', () => {
+  const canal = {
+    on: jest.fn(() => canal),
+    subscribe: jest.fn(() => canal),
+    unsubscribe: jest.fn(() => Promise.resolve()),
   };
   return {
-    io: jest.fn(() => socket),
+    createClient: jest.fn(() => ({
+      channel: jest.fn(() => canal),
+      realtime: { setAuth: jest.fn() },
+      auth: { getSession: jest.fn(() => Promise.resolve({ data: { session: null } })) },
+    })),
   };
 });

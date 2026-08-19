@@ -180,6 +180,114 @@ describeSupabase('auth: recuperación segura', () => {
   });
 });
 
+describeSupabase('auth: registro fácil y verificación de cuenta', () => {
+  it('registro-facil crea la cuenta solo con nombre, email y contraseña tras verificar el código de correo', async () => {
+    const sms = await supertest(app).post('/auth/email/enviar').send({ email: 'facil@test.com' });
+    expect(sms.status).toBe(200);
+    const codigo = sms.body.codigo as string;
+
+    const res = await supertest(app)
+      .post('/auth/registro-facil')
+      .send({ nombre: 'Facil', email: 'facil@test.com', password: 'Clave123', codigoOtp: codigo, color: '#2563eb' });
+    expect(res.status).toBe(201);
+    expect(res.body.token).toBeTruthy();
+    expect(res.body.usuario).toMatchObject({ nombre: 'Facil', saldo: 1000, cuentaVerificada: false });
+
+    const login = await supertest(app)
+      .post('/auth/login')
+      .send({ identificador: 'facil@test.com', password: 'Clave123' });
+    expect(login.status).toBe(200);
+    expect(login.body.usuario.cuentaVerificada).toBe(false);
+  });
+
+  it('registro-facil rechaza un código de correo inválido', async () => {
+    const res = await supertest(app)
+      .post('/auth/registro-facil')
+      .send({ nombre: 'Facil2', email: 'facil2@test.com', password: 'Clave123', codigoOtp: '000000' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('otp_invalido');
+  });
+
+  it('registro-facil valida nombre, email y contraseña', async () => {
+    const casos: Array<[Record<string, unknown>, string]> = [
+      [{ nombre: 'X', email: 'x@test.com', password: 'Clave123', codigoOtp: '000000' }, 'nombre_invalido'],
+      [{ nombre: 'Válido', email: 'no-correo', password: 'Clave123', codigoOtp: '000000' }, 'email_invalido'],
+      [{ nombre: 'Válido', email: 'v@test.com', password: 'corta', codigoOtp: '000000' }, 'password_debil'],
+    ];
+    for (const [cuerpo, error] of casos) {
+      const res = await supertest(app).post('/auth/registro-facil').send(cuerpo);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe(error);
+    }
+  });
+
+  it('registro-facil rechaza un email ya en uso', async () => {
+    const sms = await supertest(app).post('/auth/email/enviar').send({ email: 'facil3@test.com' });
+    const codigo = sms.body.codigo as string;
+    await supertest(app)
+      .post('/auth/registro-facil')
+      .send({ nombre: 'Primero', email: 'facil3@test.com', password: 'Clave123', codigoOtp: codigo });
+    const sms2 = await supertest(app).post('/auth/email/enviar').send({ email: 'facil3@test.com' });
+    const codigo2 = sms2.body.codigo as string;
+    const res = await supertest(app)
+      .post('/auth/registro-facil')
+      .send({ nombre: 'Segundo', email: 'facil3@test.com', password: 'Clave123', codigoOtp: codigo2 });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('email_en_uso');
+  });
+
+  it('verificar-cuenta exige autenticación', async () => {
+    const res = await supertest(app).post('/auth/verificar-cuenta').send({});
+    expect(res.status).toBe(401);
+  });
+
+  it('verificar-cuenta completa los datos y marca la cuenta como verificada', async () => {
+    const { token } = await registrarUsuario(app, 'Verif', { telefono: '+34600000010' });
+    const sms = await supertest(app).post('/auth/sms/enviar').send({ telefono: '+34600000010' });
+    const codigo = sms.body.codigo as string;
+
+    const res = await supertest(app)
+      .post('/auth/verificar-cuenta')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        nombreCompleto: 'Verif Completo',
+        telefono: '+34600000010',
+        codigoOtp: codigo,
+        fechaNacimiento: '1990-05-05',
+        pais: 'España',
+        terminosAceptados: true,
+        preguntaSeguridad: 'nombre_mascota',
+        respuestaSeguridad: 'Rex',
+        dosFactores: false,
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.usuario.cuentaVerificada).toBe(true);
+  });
+
+  it('verificar-cuenta valida los datos de seguridad', async () => {
+    const { token } = await registrarUsuario(app, 'Verif2', { telefono: '+34600000011' });
+    const casos: Array<[Record<string, unknown>, string]> = [
+      [{ nombreCompleto: 'X', telefono: '+34600000011', codigoOtp: '000000', fechaNacimiento: '1990-01-01', pais: 'España', terminosAceptados: true, preguntaSeguridad: 'nombre_mascota', respuestaSeguridad: 'Rex' }, 'nombre_completo_invalido'],
+      [{ nombreCompleto: 'Válido', telefono: '12', codigoOtp: '000000', fechaNacimiento: '1990-01-01', pais: 'España', terminosAceptados: true, preguntaSeguridad: 'nombre_mascota', respuestaSeguridad: 'Rex' }, 'telefono_invalido'],
+      [{ nombreCompleto: 'Válido', telefono: '+34600000011', codigoOtp: '000000', fechaNacimiento: '2010-01-01', pais: 'España', terminosAceptados: true, preguntaSeguridad: 'nombre_mascota', respuestaSeguridad: 'Rex' }, 'menor_de_edad'],
+      [{ nombreCompleto: 'Válido', telefono: '+34600000011', codigoOtp: '000000', fechaNacimiento: '1990-01-01', pais: 'E', terminosAceptados: true, preguntaSeguridad: 'nombre_mascota', respuestaSeguridad: 'Rex' }, 'pais_requerido'],
+      [{ nombreCompleto: 'Válido', telefono: '+34600000011', codigoOtp: '000000', fechaNacimiento: '1990-01-01', pais: 'España', terminosAceptados: false, preguntaSeguridad: 'nombre_mascota', respuestaSeguridad: 'Rex' }, 'terminos_no_aceptados'],
+      [{ nombreCompleto: 'Válido', telefono: '+34600000011', codigoOtp: '000000', fechaNacimiento: '1990-01-01', pais: 'España', terminosAceptados: true, preguntaSeguridad: 'otra', respuestaSeguridad: 'Rex' }, 'pregunta_seguridad_invalida'],
+      [{ nombreCompleto: 'Válido', telefono: '+34600000011', codigoOtp: '000000', fechaNacimiento: '1990-01-01', pais: 'España', terminosAceptados: true, preguntaSeguridad: 'nombre_mascota', respuestaSeguridad: 'X' }, 'respuesta_seguridad_invalida'],
+      [{ nombreCompleto: 'Válido', telefono: '+34600000011', codigoOtp: '123456', fechaNacimiento: '1990-01-01', pais: 'España', terminosAceptados: true, preguntaSeguridad: 'nombre_mascota', respuestaSeguridad: 'Rex' }, 'otp_invalido'],
+    ];
+    for (const [cuerpo, error] of casos) {
+      reiniciarLimitador();
+      const res = await supertest(app)
+        .post('/auth/verificar-cuenta')
+        .set('Authorization', `Bearer ${token}`)
+        .send(cuerpo);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe(error);
+    }
+  });
+});
+
 describeSupabase('auth: límite de peticiones', () => {
   it('bloquea con 429 tras superar el máximo de intentos de login', async () => {
     await registrarUsuario(app, 'Ana', { telefono: '+34600000001' });

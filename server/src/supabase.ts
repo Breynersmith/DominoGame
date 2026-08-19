@@ -67,7 +67,8 @@ async function clavesJwks(): Promise<Map<string, crypto.KeyObject>> {
   for (const clave of datos.keys ?? []) {
     if (clave.kid && clave.kty) {
       try {
-        mapa.set(clave.kid, crypto.createPublicKey({ key: clave as crypto.JsonWebKey, format: 'jwk' }));
+        const material = { key: clave, format: 'jwk' } as unknown as Parameters<typeof crypto.createPublicKey>[0];
+        mapa.set(clave.kid, crypto.createPublicKey(material));
       } catch {
         // clave inutilizable: se omite
       }

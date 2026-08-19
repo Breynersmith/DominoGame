@@ -1,0 +1,10 @@
+{
+  "nodeModulesDir": "auto",
+  "fmt": {
+    "lineWidth": 120
+  },
+  "compilerOptions": {
+    "lib": ["deno.ns", "dom", "esnext"],
+    "strict": true
+  }
+}

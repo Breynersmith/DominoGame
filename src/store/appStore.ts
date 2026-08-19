@@ -14,7 +14,9 @@ import {
   apiRecuperar,
   apiRecuperarPregunta,
   apiYo,
+  apiVerificarCuenta,
   actualizarToken,
+  DatosVerificarCuenta,
   ErrorApi,
   ResultadoLogin,
   UsuarioApi,
@@ -30,6 +32,7 @@ export interface PerfilUsuario {
   pais?: string;
   color: string;
   kycEstado?: string;
+  cuentaVerificada?: boolean;
   foto?: string;
 }
 
@@ -62,6 +65,7 @@ export type Vista =
   | 'perfil'
   | 'editarPerfil'
   | 'kyc'
+  | 'verificarCuenta'
   | 'pagos'
   | 'amigos'
   | 'notificaciones'
@@ -148,6 +152,7 @@ interface AppStore {
   recuperarContrasena: (telefono: string, codigoOtp: string, nuevoPassword: string) => Promise<boolean>;
   recuperarPorPregunta: (identificador: string, pregunta: string, respuesta: string, nuevoPassword: string) => Promise<boolean>;
   enviarKyc: (tipoDocumento: string, numeroDocumento: string, selfie: string) => Promise<boolean>;
+  verificarCuenta: (datos: DatosVerificarCuenta) => Promise<boolean>;
   actualizarAjustes: (cambios: Partial<Ajustes>) => void;
   cerrarSesion: () => void;
   irARegistro: () => void;
@@ -189,7 +194,14 @@ async function guardar(get: () => AppStore) {
 }
 
 function mapearUsuario(u: UsuarioApi): PerfilUsuario {
-  return { id: u.id, nombre: u.nombre, color: u.color, kycEstado: u.kycEstado ?? 'no_enviado', foto: u.foto };
+  return {
+    id: u.id,
+    nombre: u.nombre,
+    color: u.color,
+    kycEstado: u.kycEstado ?? 'no_enviado',
+    cuentaVerificada: u.cuentaVerificada ?? false,
+    foto: u.foto,
+  };
 }
 
 function esErrorDeRed(err: unknown): boolean {
@@ -229,6 +241,7 @@ async function guardarSesionServidor(
       nombre: usuario.nombre,
       color: usuario.color,
       kycEstado: usuario.kycEstado ?? 'no_enviado',
+      cuentaVerificada: usuario.cuentaVerificada ?? false,
       foto: usuario.foto,
     },
     saldo: usuario.saldo,
@@ -295,6 +308,7 @@ export const useAppStore = create<AppStore>()((set, get) => ({
               nombre: usuario.nombre,
               color: usuario.color,
               kycEstado: usuario.kycEstado ?? 'no_enviado',
+              cuentaVerificada: usuario.cuentaVerificada ?? false,
               foto: usuario.foto,
             }
           : mapearUsuario(usuario),
@@ -388,6 +402,28 @@ export const useAppStore = create<AppStore>()((set, get) => ({
       const r = await apiEnviarKyc({ tipoDocumento, numeroDocumento, selfie });
       set({
         perfil: get().perfil ? { ...(get().perfil as PerfilUsuario), kycEstado: r.estado } : null,
+      });
+      void guardar(get);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  verificarCuenta: async datos => {
+    try {
+      const r = await apiVerificarCuenta(datos);
+      set({
+        perfil: get().perfil
+          ? {
+              ...(get().perfil as PerfilUsuario),
+              nombreCompleto: datos.nombreCompleto,
+              telefono: datos.telefono,
+              fechaNacimiento: datos.fechaNacimiento,
+              pais: datos.pais,
+              cuentaVerificada: r.usuario.cuentaVerificada ?? true,
+            }
+          : null,
       });
       void guardar(get);
       return true;

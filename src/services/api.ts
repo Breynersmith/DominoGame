@@ -1,8 +1,10 @@
 // src/services/api.ts
-// Cliente HTTP hacia el backend Domino Club. Todas las funciones lanzan
-// un Error con `.codigo` (id del error del servidor) y `.status`.
+// Cliente HTTP hacia el backend Domino Club (Edge Functions de Supabase).
+// Todas las funciones lanzan un Error con `.codigo` (id del error del servidor)
+// y `.status`.
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001';
+const API_URL =
+  process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001';
 
 export const API_BASE_URL = API_URL;
 
@@ -60,6 +62,7 @@ export interface UsuarioApi {
   color: string;
   saldo: number;
   kycEstado?: string;
+  cuentaVerificada?: boolean;
   foto?: string;
 }
 
@@ -75,9 +78,31 @@ export interface SalaApi {
   codigo: string;
   nombre: string;
   apuesta: number;
-  host_id: number;
-  estado: string;
-  jugadores: number | { id: number; nombre: string; color: string }[];
+  hostId: number;
+  estado: 'espera' | 'jugando';
+  jugadores: { id: number; nombre: string; color: string; foto?: string | null }[];
+  partida: { empezada: boolean } | null;
+}
+
+export interface PartidaApi {
+  codigo: string;
+  opciones: { robarPozo: boolean; fichasPorJugador: number };
+  estado: unknown;
+  jugadores: { usuarioId: number; nombre: string; color: string; esBot: boolean; foto?: string }[];
+  apuesta: number;
+  pagada: number;
+  humanos_inicio: number;
+  resultado: { pot: number; pagos: Record<number, { tipo: string; monto: number }>; motivo?: string } | null;
+}
+
+export interface MensajeChatApi {
+  id: number;
+  usuarioId: number;
+  nombre: string;
+  color: string;
+  foto?: string | null;
+  texto: string;
+  ts: number;
 }
 
 // ---------- Auth ----------
@@ -109,11 +134,37 @@ export function apiRegistro(datos: DatosRegistro) {
   });
 }
 
-// Registro rápido para pruebas (requiere modo permisivo en el servidor).
-export function apiRegistroRapido(nombre: string, color: string) {
-  return peticion<{ token: string; usuario: UsuarioApi }>('/auth/registro', {
+// Registro fácil: nombre, email y contraseña, con código de verificación de
+// correo. El resto de datos de seguridad se piden después con apiVerificarCuenta.
+export function apiRegistroFacil(
+  nombre: string,
+  email: string,
+  password: string,
+  color: string,
+  codigoOtp: string,
+) {
+  return peticion<{ token: string; usuario: UsuarioApi }>('/auth/registro-facil', {
     method: 'POST',
-    body: JSON.stringify({ nombre, color }),
+    body: JSON.stringify({ nombre, email, password, color, codigoOtp }),
+  });
+}
+
+export interface DatosVerificarCuenta {
+  nombreCompleto: string;
+  telefono: string;
+  codigoOtp: string;
+  fechaNacimiento: string;
+  pais: string;
+  terminosAceptados: boolean;
+  preguntaSeguridad: string;
+  respuestaSeguridad: string;
+  dosFactores: boolean;
+}
+
+export function apiVerificarCuenta(datos: DatosVerificarCuenta) {
+  return peticion<{ usuario: UsuarioApi }>('/auth/verificar-cuenta', {
+    method: 'POST',
+    body: JSON.stringify(datos),
   });
 }
 
@@ -121,6 +172,13 @@ export function apiEnviarSms(telefono: string) {
   return peticion<{ ok: true; demo: boolean; codigo?: string }>('/auth/sms/enviar', {
     method: 'POST',
     body: JSON.stringify({ telefono }),
+  });
+}
+
+export function apiEnviarCodigoEmail(email: string) {
+  return peticion<{ ok: true; demo: boolean; codigo?: string }>('/auth/email/enviar', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
   });
 }
 
@@ -257,14 +315,75 @@ export function apiEliminarAmigo(nombre: string) {
 
 // ---------- Salas ----------
 
+export interface SalaDatosApi {
+  sala: SalaApi;
+  partida: PartidaApi | null;
+  chat: MensajeChatApi[];
+}
+
 export function apiListarSalas() {
   return peticion<{ salas: SalaApi[] }>('/salas');
 }
 
 export function apiCrearSala(nombre: string, apuesta: number) {
-  return peticion<{ sala: SalaApi }>('/salas', {
+  return peticion<SalaDatosApi>('/salas', {
     method: 'POST',
     body: JSON.stringify({ nombre, apuesta }),
+  });
+}
+
+export function apiUnirseSala(codigo: string) {
+  return peticion<SalaDatosApi>(`/salas/${encodeURIComponent(codigo)}/unirse`, { method: 'POST' });
+}
+
+export function apiObtenerSala(codigo: string) {
+  return peticion<SalaDatosApi>(`/salas/${encodeURIComponent(codigo)}`);
+}
+
+export function apiSalirSala(codigo: string) {
+  return peticion<{ ok: true; eliminada: boolean }>(`/salas/${encodeURIComponent(codigo)}/salir`, {
+    method: 'POST',
+  });
+}
+
+export function apiEmpezarPartida(codigo: string, robarPozo: boolean, fichasPorJugador: number) {
+  return peticion<{ ok: true; apuesta: number }>(`/salas/${encodeURIComponent(codigo)}/empezar`, {
+    method: 'POST',
+    body: JSON.stringify({ robarPozo, fichasPorJugador }),
+  });
+}
+
+export function apiJugar(codigo: string, fichaId: string, extremo: 'izquierdo' | 'derecho') {
+  return peticion<{ ok: true }>(`/salas/${encodeURIComponent(codigo)}/jugar`, {
+    method: 'POST',
+    body: JSON.stringify({ fichaId, extremo }),
+  });
+}
+
+export function apiRobar(codigo: string) {
+  return peticion<{ ok: true }>(`/salas/${encodeURIComponent(codigo)}/robar`, { method: 'POST' });
+}
+
+export function apiPasar(codigo: string) {
+  return peticion<{ ok: true }>(`/salas/${encodeURIComponent(codigo)}/pasar`, { method: 'POST' });
+}
+
+export function apiEsperar(codigo: string) {
+  return peticion<{ ok: true }>(`/salas/${encodeURIComponent(codigo)}/esperar`, { method: 'POST' });
+}
+
+export function apiAbandonarPartida(codigo: string) {
+  return peticion<{ ok: true }>(`/salas/${encodeURIComponent(codigo)}/abandonar`, { method: 'POST' });
+}
+
+export function apiHistorialChat(codigo: string) {
+  return peticion<{ mensajes: MensajeChatApi[] }>(`/salas/${encodeURIComponent(codigo)}/chat`);
+}
+
+export function apiEnviarChat(codigo: string, texto: string) {
+  return peticion<{ ok: true }>(`/salas/${encodeURIComponent(codigo)}/chat`, {
+    method: 'POST',
+    body: JSON.stringify({ texto }),
   });
 }
 

@@ -814,7 +814,7 @@ function SalaEspera() {
           <Text style={styles.esperaSubtitulo}>{t('jugadores')}</Text>
           {sala?.jugadores.map(j => (
             <View key={j.id} style={styles.filaJugador}>
-              <Avatar foto={j.foto} color={j.color} nombre={j.nombre} tamano={26} estilo={styles.avatarJugador} />
+              <Avatar foto={j.foto ?? undefined} color={j.color} nombre={j.nombre} tamano={26} estilo={styles.avatarJugador} />
               <Text style={styles.nombreJugador}>
                 {j.nombre}
                 {j.id === sala.hostId ? ` (${t('anfitrion')})` : ''}
