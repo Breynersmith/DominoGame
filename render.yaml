@@ -1,0 +1,40 @@
+services:
+  # Backend: API REST + Socket.IO + SQLite
+  - type: web
+    name: domino-server
+    runtime: node
+    rootDir: server
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DB_PATH
+        value: /var/data/domino.db
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+
+  # Frontend web: export estático de Expo (bundle con la URL del servidor)
+  - type: web
+    name: domino-web
+    runtime: static
+    buildCommand: npm install && EXPO_PUBLIC_API_URL="https://$API_HOST" npx expo export --platform web
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: API_HOST
+        fromService:
+          name: domino-server
+          type: web
+          property: host
