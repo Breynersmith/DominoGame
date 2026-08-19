@@ -1,9 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
 import supertest from 'supertest';
-import { crearApp } from '../src/app';
-import { crearDb, Db } from '../src/db';
-import { reiniciarLimitador } from '../src/limiter';
-import { registrarUsuario } from './helpers';
+import { Db } from '../src/db';
+import { prepararServidor, describeSupabase, cerrarPool, registrarUsuario } from './helpers';
 import { Express } from 'express';
 
 let db: Db;
@@ -12,9 +10,9 @@ let tokenAna: string;
 let tokenLeo: string;
 
 beforeEach(async () => {
-  db = crearDb(':memory:');
-  app = crearApp(db);
-  reiniciarLimitador();
+  const s = await prepararServidor();
+  db = s.db;
+  app = s.app;
   const ana = await registrarUsuario(app, 'Ana');
   const leo = await registrarUsuario(app, 'Leo');
   tokenAna = ana.token;
@@ -22,10 +20,12 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  db.close();
+  db.cerrar();
 });
 
-describe('amigos', () => {
+afterAll(() => cerrarPool());
+
+describeSupabase('amigos', () => {
   it('agrega un amigo y lo lista', async () => {
     const res = await supertest(app)
       .post('/amigos')

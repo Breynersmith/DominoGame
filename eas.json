@@ -13,7 +13,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://TU-SERVIDOR.onrender.com"
+        "EXPO_PUBLIC_API_URL": "https://dominoserver.onrender.com"
       }
     },
     "production": {
@@ -22,7 +22,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://TU-SERVIDOR.onrender.com"
+        "EXPO_PUBLIC_API_URL": "https://dominoserver.onrender.com"
       }
     }
   },

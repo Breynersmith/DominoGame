@@ -1,5 +1,5 @@
 services:
-  # Backend: API REST + Socket.IO + SQLite
+  # Backend: API REST + Socket.IO + Supabase (Postgres + Auth + Storage)
   - type: web
     name: domino-server
     runtime: node
@@ -10,8 +10,16 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
-      - key: JWT_SECRET
-        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
 
   # Frontend web: export estático de Expo (bundle con la URL del servidor)
   - type: web

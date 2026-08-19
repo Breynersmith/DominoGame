@@ -1,9 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
 import supertest from 'supertest';
-import { crearApp } from '../src/app';
-import { crearDb, Db } from '../src/db';
+import { Db } from '../src/db';
+import { prepararServidor, describeSupabase, cerrarPool, registrarUsuario } from './helpers';
 import { reiniciarLimitador } from '../src/limiter';
-import { registrarUsuario } from './helpers';
 import { Express } from 'express';
 
 let db: Db;
@@ -29,17 +28,19 @@ async function enviarOtp(telefono: string): Promise<string> {
   return res.body.codigo as string;
 }
 
-beforeEach(() => {
-  db = crearDb(':memory:');
-  app = crearApp(db);
-  reiniciarLimitador();
+beforeEach(async () => {
+  const s = await prepararServidor();
+  db = s.db;
+  app = s.app;
 });
 
 afterEach(() => {
-  db.close();
+  db.cerrar();
 });
 
-describe('auth: registro seguro', () => {
+afterAll(() => cerrarPool());
+
+describeSupabase('auth: registro seguro', () => {
   it('registra con contraseña, pregunta de seguridad y saldo inicial', async () => {
     const codigo = await enviarOtp(REGISTRO_BASE.telefono);
     const res = await supertest(app).post('/auth/registro').send({ ...REGISTRO_BASE, codigoOtp: codigo });
@@ -90,7 +91,7 @@ describe('auth: registro seguro', () => {
   });
 });
 
-describe('auth: login con contraseña', () => {
+describeSupabase('auth: login con contraseña', () => {
   it('inicia sesión con email y contraseña', async () => {
     await registrarUsuario(app, 'Ana', { email: 'ana@test.com', telefono: '+34600000001' });
     const res = await supertest(app).post('/auth/login').send({ identificador: 'ana@test.com', password: 'Clave123' });
@@ -112,7 +113,7 @@ describe('auth: login con contraseña', () => {
   });
 });
 
-describe('auth: doble factor (2FA)', () => {
+describeSupabase('auth: doble factor (2FA)', () => {
   it('con 2FA activo el login pide el código SMS y el segundo paso devuelve el token', async () => {
     await registrarUsuario(app, 'Ana', { telefono: '+34600000001', dosFactores: true });
 
@@ -137,7 +138,7 @@ describe('auth: doble factor (2FA)', () => {
   });
 });
 
-describe('auth: recuperación segura', () => {
+describeSupabase('auth: recuperación segura', () => {
   it('recupera la contraseña por pregunta de seguridad', async () => {
     await registrarUsuario(app, 'Ana', { telefono: '+34600000001', preguntaSeguridad: 'ciudad_nacimiento', respuestaSeguridad: 'Madrid' });
 
@@ -179,7 +180,7 @@ describe('auth: recuperación segura', () => {
   });
 });
 
-describe('auth: límite de peticiones', () => {
+describeSupabase('auth: límite de peticiones', () => {
   it('bloquea con 429 tras superar el máximo de intentos de login', async () => {
     await registrarUsuario(app, 'Ana', { telefono: '+34600000001' });
     for (let i = 0; i < 10; i += 1) {
@@ -191,7 +192,7 @@ describe('auth: límite de peticiones', () => {
   });
 });
 
-describe('auth: registro permisivo (pruebas)', () => {
+describeSupabase('auth: registro permisivo (pruebas)', () => {
   afterEach(() => {
     delete process.env.REGISTRO_PERMISIVO;
   });

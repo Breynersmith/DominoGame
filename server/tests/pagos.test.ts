@@ -1,9 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
 import supertest from 'supertest';
-import { crearApp } from '../src/app';
-import { crearDb, Db } from '../src/db';
-import { reiniciarLimitador } from '../src/limiter';
-import { registrarUsuario } from './helpers';
+import { Db } from '../src/db';
+import { prepararServidor, describeSupabase, cerrarPool, registrarUsuario } from './helpers';
 import { Express } from 'express';
 
 let db: Db;
@@ -11,18 +9,20 @@ let app: Express;
 let token: string;
 
 beforeEach(async () => {
-  db = crearDb(':memory:');
-  app = crearApp(db);
-  reiniciarLimitador();
+  const s = await prepararServidor();
+  db = s.db;
+  app = s.app;
   const reg = await registrarUsuario(app, 'Ana');
   token = reg.token;
 });
 
 afterEach(() => {
-  db.close();
+  db.cerrar();
 });
 
-describe('métodos de pago', () => {
+afterAll(() => cerrarPool());
+
+describeSupabase('métodos de pago', () => {
   it('exige autenticación', async () => {
     const res = await supertest(app).get('/pagos');
     expect(res.status).toBe(401);

@@ -1,23 +1,38 @@
 // server/src/index.ts
-// Punto de entrada: servidor HTTP + Socket.IO.
+// Punto de entrada: servidor HTTP + Socket.IO contra Supabase.
 
+import 'dotenv/config';
 import http from 'http';
 import { Server } from 'socket.io';
-import { crearDb } from './db';
+import { Db, inicializarEsquema } from './db';
 import { crearApp } from './app';
 import { registrarSockets } from './sockets/salaManager';
+import { asegurarBuckets, supabaseConfigurado } from './supabase';
 
-const PORT = Number(process.env.PORT ?? 3001);
-const DB_PATH = process.env.DB_PATH ?? 'data/domino.db';
+async function arrancar(): Promise<void> {
+  const PORT = Number(process.env.PORT ?? 3001);
+  const DATABASE_URL = process.env.DATABASE_URL;
+  if (!DATABASE_URL) {
+    throw new Error('Falta DATABASE_URL (cadena de conexión de Supabase Postgres)');
+  }
 
-const db = crearDb(DB_PATH);
-const app = crearApp(db);
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: true, credentials: true },
-});
-registrarSockets(io, db);
+  const db = Db.conectar(DATABASE_URL);
+  await inicializarEsquema(db);
+  await asegurarBuckets();
 
-server.listen(PORT, () => {
-  console.log(`Domino Club server en http://localhost:${PORT} (db: ${DB_PATH})`);
+  const app = crearApp(db);
+  const server = http.createServer(app);
+  const io = new Server(server, {
+    cors: { origin: true, credentials: true },
+  });
+  registrarSockets(io, db);
+
+  server.listen(PORT, () => {
+    console.log(`Domino Club server en http://localhost:${PORT} (Supabase: ${supabaseConfigurado() ? 'sí' : 'NO'})`);
+  });
+}
+
+arrancar().catch(e => {
+  console.error(e);
+  process.exit(1);
 });

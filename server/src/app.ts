@@ -1,6 +1,6 @@
 // server/src/app.ts
 
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { Db } from './db';
 import { crearRouterAuth } from './routes/auth';
@@ -16,7 +16,7 @@ import { crearRouterPagos } from './routes/pagos';
 export function crearApp(db: Db) {
   const app = express();
   app.use(cors());
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '5mb' }));
 
   app.get('/health', (_req, res) => {
     res.json({ ok: true });
@@ -31,6 +31,12 @@ export function crearApp(db: Db) {
   app.use('/salas', crearRouterSalas(db));
   app.use('/kyc', crearRouterKyc(db));
   app.use('/pagos', crearRouterPagos(db));
+
+  // Manejador central de errores (para handlers async que fallen).
+  app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+    console.error(err);
+    res.status(500).json({ error: 'error_interno' });
+  });
 
   return app;
 }

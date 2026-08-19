@@ -1,43 +1,94 @@
 // server/tests/helpers.ts
-// Utilidades para levantar el servidor en memoria en los tests.
+// Utilidades para levantar el servidor contra una base Supabase real en los
+// tests. Si no hay credenciales configuradas, los tests se saltan (ver
+// `describeSupabase` y `supabaseConfigurado`).
 
+import { describe } from 'vitest';
 import http from 'http';
+import { Pool } from 'pg';
 import supertest from 'supertest';
 import { Server } from 'socket.io';
 import { io as Client } from 'socket.io-client';
 import { crearApp } from '../src/app';
-import { crearDb, Db } from '../src/db';
-import { registrarSockets } from '../src/sockets/salaManager';
+import { Db, inicializarEsquema } from '../src/db';
+import { registrarSockets, SalaManager } from '../src/sockets/salaManager';
+import { supabaseConfigurado, asegurarBuckets } from '../src/supabase';
+import { reiniciarLimitador } from '../src/limiter';
+
+let poolCompartido: Pool | null = null;
+
+// Devuelve un Db que comparte un único pool por proceso.
+export function baseDatosDePrueba(): Db {
+  const cs = process.env.DATABASE_URL;
+  if (!cs) throw new Error('Falta DATABASE_URL para los tests de Supabase');
+  if (!poolCompartido) poolCompartido = new Pool({ connectionString: cs, max: 5, ssl: { rejectUnauthorized: false } });
+  return new Db(poolCompartido, false);
+}
+
+export function cerrarPool(): Promise<void> {
+  if (poolCompartido) {
+    const p = poolCompartido;
+    poolCompartido = null;
+    return p.end();
+  }
+  return Promise.resolve();
+}
+
+// Vacía todas las tablas y los usuarios de Supabase Auth para aislar los tests.
+export async function limpiarBase(db: Db): Promise<void> {
+  await db.ejecutar('DELETE FROM auth.users').catch(() => {});
+  await db
+    .ejecutar(
+      'TRUNCATE TABLE codigos_otp, sessions_pendientes, sala_jugadores, salas, amigos, notificaciones, disputas, transacciones, metodos_pago, perfiles CASCADE',
+    )
+    .catch(() => {});
+}
 
 export interface ServidorPrueba {
   db: Db;
   app: ReturnType<typeof crearApp>;
   server: http.Server;
   io: Server;
+  manager: SalaManager;
   cerrar: () => Promise<void>;
 }
 
-export function crearServidor(): ServidorPrueba {
-  const db = crearDb(':memory:');
+export async function crearServidor(): Promise<ServidorPrueba> {
+  const db = baseDatosDePrueba();
+  await inicializarEsquema(db);
+  await limpiarBase(db);
+  await asegurarBuckets();
   const app = crearApp(db);
   const server = http.createServer(app);
   const io = new Server(server, { cors: { origin: true } });
-  registrarSockets(io, db);
+  const manager = registrarSockets(io, db);
+  reiniciarLimitador();
   return {
     db,
     app,
     server,
     io,
+    manager,
     cerrar: () =>
       new Promise<void>(resolve => {
+        manager.cerrar();
         io.close(() => {
-          server.close(() => {
-            db.close();
-            resolve();
-          });
+          server.close(() => resolve());
         });
       }),
   };
+}
+
+// Equivalente al `beforeEach` de los tests antiguos con SQLite: deja un Db y
+// una app limpios (esquema aplicado y base vacía).
+export async function prepararServidor(): Promise<{ db: Db; app: ReturnType<typeof crearApp>; cerrar: () => void }> {
+  const db = baseDatosDePrueba();
+  await inicializarEsquema(db);
+  await limpiarBase(db);
+  await asegurarBuckets();
+  const app = crearApp(db);
+  reiniciarLimitador();
+  return { db, app, cerrar: () => void db.cerrar() };
 }
 
 let contadorUsuarios = 0;
@@ -108,3 +159,6 @@ export function esperarEvento<T = unknown>(
     socket.once(evento, onEvento);
   });
 }
+
+// Los tests de Supabase solo se ejecutan si hay credenciales configuradas.
+export const describeSupabase = supabaseConfigurado() ? describe : describe.skip;

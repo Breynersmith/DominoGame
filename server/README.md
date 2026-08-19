@@ -1,26 +1,38 @@
 # Domino Club — Servidor
 
-Backend del juego: **Node + Express + SQLite + Socket.IO + JWT**.
+Backend del juego: **Node + Express + Supabase (Postgres + Auth + Storage) + Socket.IO + JWT**.
 
 ## Requisitos
 - Node.js 20+ (probado con Node 22)
+- Un proyecto [Supabase](https://supabase.com) (base de datos Postgres, Auth y Storage)
 
 ## Puesta en marcha
 
+1. Crea un proyecto en Supabase.
+2. Ejecuta el esquema en el editor SQL (o `supabase db push`): `supabase/migrations/0001_inicial.sql`.
+3. Copia `server/.env` con las credenciales del proyecto:
+
 ```bash
 cd server
+cp .env .env.local        # y rellena DATABASE_URL, SUPABASE_URL, SUPABASE_ANON_KEY,
+                          # SUPABASE_SERVICE_ROLE_KEY y SUPABASE_JWT_SECRET
 npm install
-npm run dev        # arranca con tsx watch (recarga automática)
+npm run dev               # arranca con tsx watch (recarga automática)
 ```
 
-Por defecto escucha en `http://localhost:3001` y guarda la base de datos en `server/data/domino.db` (se crea sola). Configuración vía variables de entorno:
+Por defecto escucha en `http://localhost:3001`. Configuración vía variables de entorno:
 
-| Variable     | Defecto                   | Descripción                              |
-|--------------|---------------------------|------------------------------------------|
-| `PORT`       | `3001`                    | Puerto del servidor                      |
-| `DB_PATH`    | `data/domino.db`          | Ruta del archivo SQLite (`:memory:` en tests) |
-| `JWT_SECRET` | `domino-secreto-desarrollo` | Secreto para firmar los JWT            |
-| `REGISTRO_PERMISIVO` | (desarrollo)      | `1` activa el registro de pruebas (solo pide nombre) |
+| Variable | Descripción |
+|----------|-------------|
+| `PORT` | Puerto del servidor (defecto `3001`) |
+| `DATABASE_URL` | Cadena de conexión de Supabase Postgres |
+| `SUPABASE_URL` | URL del proyecto Supabase (`https://<ref>.supabase.co`) |
+| `SUPABASE_ANON_KEY` | Clave anónima (API Keys) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Clave de rol de servicio (solo backend, **nunca** en el cliente) |
+| `SUPABASE_JWT_SECRET` | Secreto JWT del proyecto (Settings → API) para validar los tokens |
+| `SUPABASE_BUCKET` | Bucket de Storage (defecto `domino`); se crea solo si falta |
+| `JWT_SECRET` | Se conserva solo por compatibilidad (ya no firma tokens) |
+| `REGISTRO_PERMISIVO` | `1` activa el registro de pruebas (solo pide nombre) |
 
 ### Registro de pruebas
 
@@ -43,25 +55,32 @@ Con el servidor encendido, el registro/login, la billetera, los amigos y las sal
 ```
 server/
   src/
-    index.ts            # entrada: HTTP + Socket.IO
+    index.ts            # entrada: HTTP + Socket.IO + bootstrap (esquema y buckets)
     app.ts              # factory de la app Express
-    db.ts               # SQLite (better-sqlite3): esquema + billetera
-    auth.ts             # hash de PIN, JWT, middleware requiereAuth
+    db.ts               # acceso a Supabase Postgres (`pg`): esquema + billetera
+    supabase.ts         # clientes Auth/Storage de Supabase, verificación de JWT
+    auth.ts             # hash de contraseñas/OTP, middleware requiereAuth
     routes/             # REST
-      auth.ts           # registro / login (2FA) / recuperar
-      usuarios.ts       # perfil, editar, buscar
+      auth.ts           # registro / login (2FA) / recuperar (con Supabase Auth)
+      usuarios.ts       # perfil, editar (foto → Storage), buscar
       billetera.ts      # saldo, transacciones, recargar
       amigos.ts         # lista, agregar, eliminar
       notificaciones.ts # listar, marcar leídas, borrar
       disputas.ts       # soporte / disputas
       salas.ts          # crear, listar, consultar salas
-      kyc.ts            # verificación de identidad (KYC)
+      kyc.ts            # verificación de identidad (KYC, selfie → Storage)
       pagos.ts          # métodos de pago (solo datos enmascarados)
     sockets/
       salaManager.ts    # partidas en tiempo real autoritativas
     game/               # motor de dominó (mismo que el cliente)
-  tests/                # vitest + supertest + socket.io-client
+  supabase/migrations/  # SQL de esquema para ejecutar en Supabase
+  tests/                # vitest + supertest + socket.io-client (requieren Supabase)
 ```
+
+## Supabase: Auth y Storage
+
+- **Auth**: los usuarios viven en `auth.users` de Supabase. El backend crea cuentas con la API de servicio (`admin.createUser`) y emite sesiones con `signInWithPassword`. Los tokens que devuelve son JWT de Supabase; el servidor los valida con `SUPABASE_JWT_SECRET` (middleware `requiereAuth` y handshake de Socket.IO). El perfil de juego (nombre, saldo, color, racha…) está en la tabla `perfiles`, ligada a `auth.users(id)` por `auth_uid`.
+- **Storage**: la foto de perfil (`PUT /usuarios/yo`) y la selfie del KYC (`POST /kyc`) se suben al bucket público `domino` y se guarda la URL pública en la base de datos (ya no se almacena base64).
 
 ## API REST
 
@@ -73,7 +92,7 @@ El registro exige verificar el teléfono con un código OTP (envío por SMS a tr
 
 - `POST /auth/sms/enviar` `{ telefono }` → genera un OTP de 6 dígitos con validez de 10 minutos.
 - `POST /auth/sms/verificar` `{ telefono, codigo }` → marca el teléfono como verificado.
-- `POST /auth/registro` `{ nombre, nombreCompleto, email, telefono, password, color?, fechaNacimiento, pais, terminosAceptados, codigoOtp, preguntaSeguridad, respuestaSeguridad, dosFactores? }` → `201 { token, usuario }` (saldo inicial 1000). Valida email, teléfono, contraseña fuerte (mín. 8 con letras y números), mayoría de edad (18+), país y aceptación de términos; el OTP se consume al usarse. La contraseña se guarda con bcrypt (no hay PIN).
+- `POST /auth/registro` `{ nombre, nombreCompleto, email, telefono, password, color?, fechaNacimiento, pais, terminosAceptados, codigoOtp, preguntaSeguridad, respuestaSeguridad, dosFactores? }` → `201 { token, usuario }` (saldo inicial 1000). Valida email, teléfono, contraseña fuerte (mín. 8 con letras y números), mayoría de edad (18+), país y aceptación de términos; el OTP se consume al usarse. La cuenta se crea en Supabase Auth y el perfil en `perfiles`.
 - `POST /auth/login` `{ identificador, password }` → `200 { token, usuario }`. Si el usuario tiene 2FA activo devuelve `200 { requiere2fa: true, telefonoEnmascarado, demo, codigo? }` sin token; hay que completar con `POST /auth/login/2fa`.
 - `POST /auth/login/2fa` `{ identificador, codigo }` → valida el OTP enviado al teléfono y devuelve `{ token, usuario }`.
 - `POST /auth/recuperar` — dos vías, ambas cambian la contraseña **solo** tras verificar la identidad:
@@ -86,7 +105,7 @@ Los endpoints de `/auth/*` están limitados por IP (anti fuerza bruta): `sms/env
 
 ### Verificación de identidad (KYC)
 
-- `POST /kyc` `{ tipoDocumento, numeroDocumento, selfie }` → `202 { estado: 'pendiente' }`. Tipos: `dni`, `nie`, `pasaporte`; número de 5-20 caracteres alfanuméricos/guion; selfie en base64 `data:image/...` (máx. ~3 MB). Limitado a 3 envíos/hora.
+- `POST /kyc` `{ tipoDocumento, numeroDocumento, selfie }` → `202 { estado: 'pendiente' }`. Tipos: `dni`, `nie`, `pasaporte`; número de 5-20 caracteres alfanuméricos/guion; selfie en base64 `data:image/...` (máx. ~3 MB), que se sube a Supabase Storage. Limitado a 3 envíos/hora.
 - `GET /kyc` → estado de la verificación (`no_enviado | pendiente | aprobado | rechazado`) y datos del envío.
 
 ### Métodos de pago (opcionales)
@@ -100,7 +119,7 @@ Solo se guardan datos enmascarados; nunca datos completos de tarjeta/cuenta.
 
 ### Usuarios
 - `GET /usuarios/yo` → perfil + saldo + transacciones
-- `PUT /usuarios/yo` `{ nombre?, color? }` → edita perfil
+- `PUT /usuarios/yo` `{ nombre?, color?, foto? }` → edita perfil (la foto en data URI se sube a Storage)
 - `GET /usuarios/buscar?q=` → usuarios que coinciden (excluye a uno mismo)
 - `GET /usuarios/por-nombre/:nombre` → ficha de un usuario (para agregar amigos)
 
@@ -123,7 +142,7 @@ Solo se guardan datos enmascarados; nunca datos completos de tarjeta/cuenta.
 
 ## Partidas en tiempo real (Socket.IO)
 
-El cliente se conecta con el JWT en el handshake: `io(url, { auth: { token } })`.
+El cliente se conecta con el JWT de Supabase en el handshake: `io(url, { auth: { token } })`.
 
 ### Eventos cliente → servidor
 - `sala:unirse` `{ codigo }`
@@ -155,4 +174,4 @@ Por simplicidad de la fase 1, `partida:estado` envía las manos completas de tod
 npm test
 ```
 
-Cubren auth, billetera, amigos, salas y las partidas en tiempo real (unión, inicio, cobro de apuestas, turno y jugada del doble-6) con `supertest` y `socket.io-client` sobre una base en memoria.
+Los tests se ejecutan contra una base de datos Supabase real: configúrala con las variables de entorno anteriores (mínimo `DATABASE_URL` y las `SUPABASE_*`). Sin ellas, la suite se salta (49 tests). Cubren auth, billetera, amigos, salas y las partidas en tiempo real con `supertest` y `socket.io-client`; cada test parte de una base limpia.

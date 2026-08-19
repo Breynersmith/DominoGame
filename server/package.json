@@ -2,6 +2,9 @@
   "name": "domino-server",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": "22"
+  },
   "description": "Backend Domino Club: API REST + Socket.IO para partidas online",
   "main": "dist/index.js",
   "scripts": {
@@ -12,17 +15,19 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.49.4",
     "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^11.3.0",
     "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1",
     "socket.io": "^4.8.1"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
-    "@types/better-sqlite3": "^7.6.12",
     "@types/cors": "^2.8.17",
+    "@types/pg": "^8.11.10",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.10.0",

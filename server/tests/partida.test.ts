@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, afterAll } from 'vitest';
 import supertest from 'supertest';
 import { Socket } from 'socket.io-client';
 import {
@@ -8,8 +8,9 @@ import {
   conectar,
   esperarEvento,
   registrarUsuario,
+  describeSupabase,
+  cerrarPool,
 } from './helpers';
-import { reiniciarLimitador } from '../src/limiter';
 import { obtenerExtremosJugables, obtenerFichasJugables } from '../src/game/engine';
 import { EstadoPartida } from '../src/game/types';
 
@@ -17,7 +18,6 @@ let servidor: ServidorPrueba | null = null;
 const sockets: Socket[] = [];
 
 async function registrarYConectar(url: string, nombre: string) {
-  reiniciarLimitador();
   const reg = await registrarUsuario(servidor!.app, nombre);
   const token = reg.token;
   const socket = await conectar(url, token);
@@ -38,6 +38,15 @@ async function saldoDe(token: string) {
   return res.body.saldo as number;
 }
 
+// Emite `sala:unirse` y espera a que el servidor confirme (chat:historial es el
+// último evento que envía unirse). Evita los sleeps fijos: con la base en
+// Supabase el procesamiento es asíncrono y más lento que con SQLite local.
+async function unirse(socket: Socket, codigo: string): Promise<void> {
+  const confirmado = esperarEvento(socket, 'chat:historial');
+  socket.emit('sala:unirse', codigo);
+  await confirmado;
+}
+
 afterEach(async () => {
   for (const s of sockets) s.disconnect();
   sockets.length = 0;
@@ -47,17 +56,18 @@ afterEach(async () => {
   }
 });
 
-describe('partidas en tiempo real', () => {
+afterAll(() => cerrarPool());
+
+describeSupabase('partidas en tiempo real', () => {
   it('une a dos jugadores, el anfitrión empieza y el primero juega el doble-6', async () => {
-    servidor = crearServidor();
+    servidor = await crearServidor();
     const url = await escuchar(servidor.server);
     const ana = await registrarYConectar(url, 'Ana');
     const leo = await registrarYConectar(url, 'Leo');
     const codigo = await crearSala(ana.token, 'Mesa 1', 0);
 
-    ana.socket.emit('sala:unirse', codigo);
-    leo.socket.emit('sala:unirse', codigo);
-    await new Promise(r => setTimeout(r, 150));
+    await unirse(ana.socket, codigo);
+    await unirse(leo.socket, codigo);
 
     const promEmpezada = esperarEvento<{ apuesta: number; jugadores: { id: number; esBot: boolean; orden: number }[] }>(
       ana.socket,
@@ -94,15 +104,14 @@ describe('partidas en tiempo real', () => {
   });
 
   it('cobra la apuesta a cada jugador humano al empezar', async () => {
-    servidor = crearServidor();
+    servidor = await crearServidor();
     const url = await escuchar(servidor.server);
     const ana = await registrarYConectar(url, 'Ana');
     const leo = await registrarYConectar(url, 'Leo');
     const codigo = await crearSala(ana.token, 'Apuestas', 50);
 
-    ana.socket.emit('sala:unirse', codigo);
-    leo.socket.emit('sala:unirse', codigo);
-    await new Promise(r => setTimeout(r, 150));
+    await unirse(ana.socket, codigo);
+    await unirse(leo.socket, codigo);
 
     const promEmpezada = esperarEvento(ana.socket, 'partida:empezada');
     ana.socket.emit('sala:empezar', { codigo, robarPozo: true });
@@ -113,15 +122,14 @@ describe('partidas en tiempo real', () => {
   });
 
   it('solo el anfitrión puede empezar la partida', async () => {
-    servidor = crearServidor();
+    servidor = await crearServidor();
     const url = await escuchar(servidor.server);
     const ana = await registrarYConectar(url, 'Ana');
     const leo = await registrarYConectar(url, 'Leo');
     const codigo = await crearSala(ana.token, 'Mesa', 0);
 
-    ana.socket.emit('sala:unirse', codigo);
-    leo.socket.emit('sala:unirse', codigo);
-    await new Promise(r => setTimeout(r, 150));
+    await unirse(ana.socket, codigo);
+    await unirse(leo.socket, codigo);
 
     const promError = esperarEvento<{ error: string }>(leo.socket, 'sala:error');
     leo.socket.emit('sala:empezar', { codigo, robarPozo: true });
@@ -130,16 +138,15 @@ describe('partidas en tiempo real', () => {
   });
 
   it('cada jugador recibe un color de ficha distinto al empezar', async () => {
-    servidor = crearServidor();
+    servidor = await crearServidor();
     const url = await escuchar(servidor.server);
     // Ambos usuarios se registran con el mismo color (#2563eb)
     const ana = await registrarYConectar(url, 'Ana');
     const leo = await registrarYConectar(url, 'Leo');
     const codigo = await crearSala(ana.token, 'Mesa', 0);
 
-    ana.socket.emit('sala:unirse', codigo);
-    leo.socket.emit('sala:unirse', codigo);
-    await new Promise(r => setTimeout(r, 150));
+    await unirse(ana.socket, codigo);
+    await unirse(leo.socket, codigo);
 
     const promEmpezada = esperarEvento<{ jugadores: { id: number; color: string; esBot: boolean }[] }>(
       ana.socket,
@@ -153,15 +160,14 @@ describe('partidas en tiempo real', () => {
   });
 
   it('si el anfitrión abandona una sala en espera, el rol pasa a otro jugador', async () => {
-    servidor = crearServidor();
+    servidor = await crearServidor();
     const url = await escuchar(servidor.server);
     const ana = await registrarYConectar(url, 'Ana');
     const leo = await registrarYConectar(url, 'Leo');
     const codigo = await crearSala(ana.token, 'Mesa', 0);
 
-    ana.socket.emit('sala:unirse', codigo);
-    leo.socket.emit('sala:unirse', codigo);
-    await new Promise(r => setTimeout(r, 150));
+    await unirse(ana.socket, codigo);
+    await unirse(leo.socket, codigo);
 
     const promActualizada = esperarEvento<{ hostId: number }>(leo.socket, 'sala:actualizada');
     ana.socket.disconnect();
@@ -174,15 +180,14 @@ describe('partidas en tiempo real', () => {
   });
 
   it('sala:actualizar_perfil refresca la foto en la sala', async () => {
-    servidor = crearServidor();
+    servidor = await crearServidor();
     const url = await escuchar(servidor.server);
     const ana = await registrarYConectar(url, 'Ana');
     const leo = await registrarYConectar(url, 'Leo');
     const codigo = await crearSala(ana.token, 'Mesa', 0);
 
-    ana.socket.emit('sala:unirse', codigo);
-    leo.socket.emit('sala:unirse', codigo);
-    await new Promise(r => setTimeout(r, 150));
+    await unirse(ana.socket, codigo);
+    await unirse(leo.socket, codigo);
 
     const foto = `data:image/jpeg;base64,${'C'.repeat(10)}`;
     await supertest(servidor!.app).put('/usuarios/yo').set('Authorization', `Bearer ${ana.token}`).send({ foto });
@@ -194,11 +199,11 @@ describe('partidas en tiempo real', () => {
     ana.socket.emit('sala:actualizar_perfil');
     const actualizada = await promActualizada;
     const jugadorAna = actualizada.jugadores.find(j => j.nombre === 'Ana');
-    expect(jugadorAna?.foto).toBe(foto);
+    expect(jugadorAna?.foto).toBeTruthy(); // la foto se sube a Storage y se devuelve su URL
   });
 
   it('unirse a una sala inexistente devuelve error', async () => {
-    servidor = crearServidor();
+    servidor = await crearServidor();
     const url = await escuchar(servidor.server);
     const ana = await registrarYConectar(url, 'Ana');
 
@@ -209,13 +214,12 @@ describe('partidas en tiempo real', () => {
   });
 
   it('partida:terminada incluye los pagos de cada jugador humano', async () => {
-    servidor = crearServidor();
+    servidor = await crearServidor();
     const url = await escuchar(servidor.server);
     const ana = await registrarYConectar(url, 'Ana');
     const codigo = await crearSala(ana.token, 'Apuestas', 50);
 
-    ana.socket.emit('sala:unirse', codigo);
-    await new Promise(r => setTimeout(r, 150));
+    await unirse(ana.socket, codigo);
 
     // Conductor automático: juega por el humano en cada turno (los bots los mueve el servidor)
     ana.socket.on('partida:estado', (datos: { estado: EstadoPartida }) => {
@@ -253,18 +257,16 @@ describe('partidas en tiempo real', () => {
   });
 
   it('el chat de la sala difunde mensajes y el historial llega a quien se une', async () => {
-    servidor = crearServidor();
+    servidor = await crearServidor();
     const url = await escuchar(servidor.server);
     const ana = await registrarYConectar(url, 'Ana');
     const leo = await registrarYConectar(url, 'Leo');
     const codigo = await crearSala(ana.token, 'Mesa chat', 0);
 
-    ana.socket.emit('sala:unirse', codigo);
-    await new Promise(r => setTimeout(r, 150));
+    await unirse(ana.socket, codigo);
 
     const promMensaje = esperarEvento<{ mensaje: { nombre: string; texto: string } }>(ana.socket, 'chat:mensaje');
-    leo.socket.emit('sala:unirse', codigo);
-    await new Promise(r => setTimeout(r, 150));
+    await unirse(leo.socket, codigo);
     leo.socket.emit('chat:enviar', { codigo, texto: '¡Hola Ana!' });
 
     const recibido = await promMensaje;
@@ -280,13 +282,12 @@ describe('partidas en tiempo real', () => {
   });
 
   it('el chat rechaza mensajes vacíos o demasiado largos', async () => {
-    servidor = crearServidor();
+    servidor = await crearServidor();
     const url = await escuchar(servidor.server);
     const ana = await registrarYConectar(url, 'Ana');
     const codigo = await crearSala(ana.token, 'Mesa chat', 0);
 
-    ana.socket.emit('sala:unirse', codigo);
-    await new Promise(r => setTimeout(r, 150));
+    await unirse(ana.socket, codigo);
 
     const promError = esperarEvento<{ error: string }>(ana.socket, 'chat:error');
     ana.socket.emit('chat:enviar', { codigo, texto: '' });

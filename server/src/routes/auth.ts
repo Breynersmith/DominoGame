@@ -1,13 +1,14 @@
 // server/src/routes/auth.ts
+// Registro, login (con 2FA), recuperación de contraseña. Los usuarios viven en
+// Supabase Auth (`auth.users`) y su perfil de juego en la tabla `perfiles`.
 
 import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import { Db, ahora } from '../db';
+import { admin, anon } from '../supabase';
 import {
-  firmarToken,
   hashOtp,
   hashPassword,
-  hashPin,
   hashRespuestaSeguridad,
   esEmailValido,
   esMayorDeEdad,
@@ -18,14 +19,14 @@ import {
   generarCodigoOtp,
   serializarUsuario,
   verificarOtp,
-  verificarPassword,
   verificarRespuestaSeguridad,
   OTP_VALIDEZ_MS,
+  UsuarioAutenticado,
 } from '../auth';
 import { limitador } from '../limiter';
+import { asyncero } from '../asyncero';
 
 const NOMBRE_MAX = 18;
-const DOCUMENTO_REGEX = /^[A-Za-z0-9-]{5,20}$/;
 
 // Modo de pruebas: con REGISTRO_PERMISIVO=1 (o en desarrollo) el registro solo exige
 // el nombre; el resto se rellena con valores por defecto y no se requiere verificación
@@ -34,29 +35,37 @@ function registroPermisivo(): boolean {
   return process.env.REGISTRO_PERMISIVO === '1' || process.env.NODE_ENV === 'development';
 }
 
-interface FilaUsuario {
+export interface FilaPerfil {
   id: number;
+  auth_uid: string;
   nombre: string;
   nombre_completo: string;
   email: string | null;
   telefono: string | null;
   color: string;
   saldo: number;
-  password_hash: string | null;
-  dos_factores: number;
+  fecha_nacimiento: string | null;
+  pais: string;
+  terminos_aceptados_en: number | null;
   pregunta_seguridad: string | null;
   respuesta_seguridad_hash: string | null;
+  dos_factores: number;
   kyc_estado: string;
+  foto?: string | null;
 }
 
-function cargarUsuario(db: Db, id: number): FilaUsuario | undefined {
-  return db
-    .prepare(
-      `SELECT id, nombre, nombre_completo, email, telefono, color, saldo, password_hash,
-              dos_factores, pregunta_seguridad, respuesta_seguridad_hash, kyc_estado
-       FROM usuarios WHERE id = ?`
-    )
-    .get(id) as FilaUsuario | undefined;
+function cargarPerfil(db: Db, id: number): Promise<FilaPerfil | undefined> {
+  return db.one<FilaPerfil>(
+    `SELECT *, foto_url AS foto FROM perfiles WHERE id = $1`,
+    [id],
+  );
+}
+
+async function buscarPerfilPorIdentificador(db: Db, identificador: string): Promise<FilaPerfil | undefined> {
+  return db.one<FilaPerfil>(
+    'SELECT *, foto_url AS foto FROM perfiles WHERE LOWER(nombre) = LOWER($1) OR LOWER(email) = LOWER($1)',
+    [identificador],
+  );
 }
 
 function enviarSms(telefono: string, codigo: string): void {
@@ -66,32 +75,123 @@ function enviarSms(telefono: string, codigo: string): void {
   }
 }
 
-function registrarOtp(db: Db, telefono: string): string {
+async function registrarOtp(db: Db, telefono: string): Promise<string> {
   const codigo = generarCodigoOtp();
-  db.prepare(
-    'INSERT INTO codigos_otp (telefono, codigo_hash, expira_en, creado_en) VALUES (?, ?, ?, ?)'
-  ).run(telefono, hashOtp(codigo), ahora() + OTP_VALIDEZ_MS, ahora());
+  await db.ejecutar(
+    'INSERT INTO codigos_otp (telefono, codigo_hash, expira_en, creado_en) VALUES ($1, $2, $3, $4)',
+    [telefono, hashOtp(codigo), ahora() + OTP_VALIDEZ_MS, ahora()],
+  );
   return codigo;
 }
 
 // Verifica un código OTP para un teléfono y lo consume si es válido.
-function verificarYCOnsumirOtp(db: Db, telefono: string, codigo: string): 'ok' | 'invalido' | 'expirado' {
-  const fila = db
-    .prepare(
-      'SELECT id, codigo_hash, consumido, expira_en FROM codigos_otp WHERE telefono = ? ORDER BY id DESC LIMIT 1'
-    )
-    .get(telefono) as { id: number; codigo_hash: string; consumido: number; expira_en: number } | undefined;
+async function verificarYConsumirOtp(
+  db: Db,
+  telefono: string,
+  codigo: string,
+): Promise<'ok' | 'invalido' | 'expirado'> {
+  const fila = await db.one<{ id: number; codigo_hash: string; consumido: number; expira_en: number }>(
+    'SELECT id, codigo_hash, consumido, expira_en FROM codigos_otp WHERE telefono = $1 ORDER BY id DESC LIMIT 1',
+    [telefono],
+  );
   if (!fila) return 'invalido';
   if (fila.consumido === 1) return 'invalido';
   if (ahora() > fila.expira_en) return 'expirado';
   if (!verificarOtp(codigo, fila.codigo_hash)) return 'invalido';
-  db.prepare('UPDATE codigos_otp SET consumido = 1 WHERE id = ?').run(fila.id);
+  await db.ejecutar('UPDATE codigos_otp SET consumido = 1 WHERE id = $1', [fila.id]);
   return 'ok';
 }
 
 function enmascararTelefono(telefono: string): string {
   if (telefono.length <= 6) return telefono;
   return `${telefono.slice(0, 3)}••••${telefono.slice(-3)}`;
+}
+
+// Crea el usuario en Supabase Auth y el perfil de juego; devuelve el token de
+// acceso (o null si algo falla, tras responder el error adecuado).
+async function crearCuenta(
+  db: Db,
+  res: Response,
+  datos: {
+    nombre: string;
+    nombreCompleto: string;
+    email: string;
+    telefono: string;
+    password: string;
+    color: string;
+    fechaNacimiento: string;
+    pais: string;
+    terminosAceptadosEn: number;
+    preguntaSeguridad: string;
+    respuestaSeguridad: string;
+    dosFactores: number;
+  },
+): Promise<{ token: string; usuario: UsuarioAutenticado } | null> {
+  if (await db.one('SELECT 1 FROM perfiles WHERE LOWER(nombre) = LOWER($1)', [datos.nombre])) {
+    res.status(409).json({ error: 'nombre_en_uso' });
+    return null;
+  }
+  if (await db.one('SELECT 1 FROM perfiles WHERE LOWER(email) = LOWER($1)', [datos.email])) {
+    res.status(409).json({ error: 'email_en_uso' });
+    return null;
+  }
+  if (await db.one('SELECT 1 FROM perfiles WHERE telefono = $1', [datos.telefono])) {
+    res.status(409).json({ error: 'telefono_en_uso' });
+    return null;
+  }
+
+  const { data: creado, error: errorCrear } = await admin().auth.admin.createUser({
+    email: datos.email,
+    password: datos.password,
+    email_confirm: true,
+    user_metadata: { nombre: datos.nombre },
+  });
+  if (errorCrear || !creado?.user) {
+    const mensaje = (errorCrear?.message ?? '').toLowerCase();
+    const enUso = errorCrear?.status === 422 || mensaje.includes('already been registered') || mensaje.includes('ya está registrado');
+    res.status(enUso ? 409 : 500).json({ error: enUso ? 'email_en_uso' : 'error_interno' });
+    return null;
+  }
+  const authUid = creado.user.id;
+
+  const info = (await db.one<{ id: number }>(
+    `INSERT INTO perfiles
+       (auth_uid, nombre, nombre_completo, email, telefono, fecha_nacimiento, pais,
+        terminos_aceptados_en, pregunta_seguridad, respuesta_seguridad_hash, dos_factores,
+        color, saldo, creado_en)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+     RETURNING id`,
+    [
+      authUid,
+      datos.nombre,
+      datos.nombreCompleto,
+      datos.email,
+      datos.telefono,
+      datos.fechaNacimiento,
+      datos.pais,
+      datos.terminosAceptadosEn,
+      datos.preguntaSeguridad,
+      hashRespuestaSeguridad(datos.respuestaSeguridad),
+      datos.dosFactores,
+      datos.color,
+      1000,
+      ahora(),
+    ],
+  ))!;
+
+  const sesion = await anon().auth.signInWithPassword({ email: datos.email, password: datos.password });
+  if (sesion.error || !sesion.data.session) {
+    res.status(500).json({ error: 'error_interno' });
+    return null;
+  }
+  const fila = await cargarPerfil(db, info.id);
+  if (!fila) {
+    res.status(500).json({ error: 'error_interno' });
+    return null;
+  }
+  const resultado = { token: sesion.data.session.access_token, usuario: serializarUsuario(fila) };
+  res.status(201).json(resultado);
+  return resultado;
 }
 
 export function crearRouterAuth(db: Db): Router {
@@ -101,37 +201,37 @@ export function crearRouterAuth(db: Db): Router {
   r.post(
     '/sms/enviar',
     limitador({ clave: 'sms-enviar', ventanaMs: 60 * 1000, max: 3 }),
-    (req: Request, res: Response): void => {
+    asyncero(async (req: Request, res: Response): Promise<void> => {
       const telefono = String(req.body?.telefono ?? '').trim();
       if (!esTelefonoValido(telefono)) {
         res.status(400).json({ error: 'telefono_invalido' });
         return;
       }
-      const codigo = registrarOtp(db, telefono);
+      const codigo = await registrarOtp(db, telefono);
       enviarSms(telefono, codigo);
       res.json({ ok: true, demo: !process.env.SMS_PROVIDER, codigo: process.env.SMS_PROVIDER ? undefined : codigo });
-    },
+    }),
   );
 
   // POST /auth/sms/verificar { telefono, codigo } → marca el teléfono como verificado.
   r.post(
     '/sms/verificar',
     limitador({ clave: 'sms-verificar', ventanaMs: 60 * 1000, max: 5 }),
-    (req: Request, res: Response): void => {
+    asyncero(async (req: Request, res: Response): Promise<void> => {
       const telefono = String(req.body?.telefono ?? '').trim();
       const codigo = String(req.body?.codigo ?? '');
       if (!esTelefonoValido(telefono)) {
         res.status(400).json({ error: 'telefono_invalido' });
         return;
       }
-      const resultado = verificarYCOnsumirOtp(db, telefono, codigo);
+      const resultado = await verificarYConsumirOtp(db, telefono, codigo);
       if (resultado !== 'ok') {
         res.status(400).json({ error: resultado === 'expirado' ? 'otp_expirado' : 'otp_invalido' });
         return;
       }
-      db.prepare('UPDATE codigos_otp SET verificado = 1 WHERE telefono = ? AND consumido = 1').run(telefono);
+      await db.ejecutar('UPDATE codigos_otp SET verificado = 1 WHERE telefono = $1 AND consumido = 1', [telefono]);
       res.json({ ok: true });
-    },
+    }),
   );
 
   // POST /auth/registro
@@ -140,7 +240,7 @@ export function crearRouterAuth(db: Db): Router {
   r.post(
     '/registro',
     limitador({ clave: 'registro', ventanaMs: 60 * 1000, max: 5 }),
-    (req: Request, res: Response): void => {
+    asyncero(async (req: Request, res: Response): Promise<void> => {
       const nombre = String(req.body?.nombre ?? '').trim();
       const nombreCompleto = String(req.body?.nombreCompleto ?? '').trim();
       const email = String(req.body?.email ?? '').trim().toLowerCase();
@@ -159,6 +259,7 @@ export function crearRouterAuth(db: Db): Router {
         res.status(400).json({ error: 'nombre_invalido' });
         return;
       }
+
       if (registroPermisivo()) {
         // Registro de pruebas: solo el nombre es obligatorio.
         const sufijo = `${Date.now()}${Math.floor(Math.random() * 1e6)}`;
@@ -179,54 +280,23 @@ export function crearRouterAuth(db: Db): Router {
         const preguntaFinal = esPreguntaSeguridadValida(preguntaSeguridad) ? preguntaSeguridad : 'nombre_mascota';
         const respuestaFinal = esRespuestaSeguridadValida(respuestaSeguridad) ? respuestaSeguridad : 'prueba';
 
-        const existeNombre = db.prepare('SELECT id FROM usuarios WHERE nombre = ? COLLATE NOCASE').get(nombre);
-        if (existeNombre) {
-          res.status(409).json({ error: 'nombre_en_uso' });
-          return;
-        }
-        if (db.prepare('SELECT id FROM usuarios WHERE email = ? COLLATE NOCASE').get(emailFinal)) {
-          res.status(409).json({ error: 'email_en_uso' });
-          return;
-        }
-        if (db.prepare('SELECT id FROM usuarios WHERE telefono = ?').get(telefonoFinal)) {
-          res.status(409).json({ error: 'telefono_en_uso' });
-          return;
-        }
-
-        const info = db
-          .prepare(
-            `INSERT INTO usuarios
-               (nombre, nombre_completo, email, telefono, pin_hash, password_hash, fecha_nacimiento,
-                pais, terminos_aceptados_en, pregunta_seguridad, respuesta_seguridad_hash, dos_factores,
-                color, saldo, creado_en)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          )
-          .run(
-            nombre,
-            nombreCompletoFinal,
-            emailFinal,
-            telefonoFinal,
-            hashPin(String(crypto.randomInt(0, 1_000_000))),
-            hashPassword(passwordFinal),
-            fechaNacimientoFinal,
-            paisFinal,
-            ahora(),
-            preguntaFinal,
-            hashRespuestaSeguridad(respuestaFinal),
-            dosFactores,
-            color,
-            1000,
-            ahora(),
-          );
-        const idPermisivo = Number(info.lastInsertRowid);
-        const filaPermisiva = cargarUsuario(db, idPermisivo);
-        if (!filaPermisiva) {
-          res.status(500).json({ error: 'error_interno' });
-          return;
-        }
-        res.status(201).json({ token: firmarToken(idPermisivo), usuario: serializarUsuario(filaPermisiva) });
+        await crearCuenta(db, res, {
+          nombre,
+          nombreCompleto: nombreCompletoFinal,
+          email: emailFinal,
+          telefono: telefonoFinal,
+          password: passwordFinal,
+          color,
+          fechaNacimiento: fechaNacimientoFinal,
+          pais: paisFinal,
+          terminosAceptadosEn: ahora(),
+          preguntaSeguridad: preguntaFinal,
+          respuestaSeguridad: respuestaFinal,
+          dosFactores,
+        });
         return;
       }
+
       if (nombreCompleto.length < 2) {
         res.status(400).json({ error: 'nombre_completo_invalido' });
         return;
@@ -264,7 +334,7 @@ export function crearRouterAuth(db: Db): Router {
         return;
       }
 
-      const otpResultado = verificarYCOnsumirOtp(db, telefono, codigoOtp);
+      const otpResultado = await verificarYConsumirOtp(db, telefono, codigoOtp);
       if (otpResultado === 'invalido') {
         res.status(400).json({ error: 'otp_invalido' });
         return;
@@ -274,59 +344,21 @@ export function crearRouterAuth(db: Db): Router {
         return;
       }
 
-      const existeNombre = db.prepare('SELECT id FROM usuarios WHERE nombre = ? COLLATE NOCASE').get(nombre);
-      if (existeNombre) {
-        res.status(409).json({ error: 'nombre_en_uso' });
-        return;
-      }
-      const existeEmail = db.prepare('SELECT id FROM usuarios WHERE email = ? COLLATE NOCASE').get(email);
-      if (existeEmail) {
-        res.status(409).json({ error: 'email_en_uso' });
-        return;
-      }
-      const existeTelefono = db.prepare('SELECT id FROM usuarios WHERE telefono = ?').get(telefono);
-      if (existeTelefono) {
-        res.status(409).json({ error: 'telefono_en_uso' });
-        return;
-      }
-
-      // El PIN de 4 dígitos ya no existe: pin_hash se rellena con un valor aleatorio
-      // para mantener la columna, pero la única credencial es la contraseña.
-      const pinInerte = hashPin(String(crypto.randomInt(0, 1_000_000)));
-
-      const info = db
-        .prepare(
-          `INSERT INTO usuarios
-             (nombre, nombre_completo, email, telefono, pin_hash, password_hash, fecha_nacimiento,
-              pais, terminos_aceptados_en, pregunta_seguridad, respuesta_seguridad_hash, dos_factores,
-              color, saldo, creado_en)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          nombre,
-          nombreCompleto,
-          email,
-          telefono,
-          pinInerte,
-          hashPassword(password),
-          fechaNacimiento,
-          pais,
-          ahora(),
-          preguntaSeguridad,
-          hashRespuestaSeguridad(respuestaSeguridad),
-          dosFactores,
-          color,
-          1000,
-          ahora(),
-        );
-      const id = Number(info.lastInsertRowid);
-      const fila = cargarUsuario(db, id);
-      if (!fila) {
-        res.status(500).json({ error: 'error_interno' });
-        return;
-      }
-      res.status(201).json({ token: firmarToken(id), usuario: serializarUsuario(fila) });
-    },
+      await crearCuenta(db, res, {
+        nombre,
+        nombreCompleto,
+        email,
+        telefono,
+        password,
+        color,
+        fechaNacimiento,
+        pais,
+        terminosAceptadosEn: ahora(),
+        preguntaSeguridad,
+        respuestaSeguridad,
+        dosFactores,
+      });
+    }),
   );
 
   // POST /auth/login { identificador, password }
@@ -334,64 +366,72 @@ export function crearRouterAuth(db: Db): Router {
   r.post(
     '/login',
     limitador({ clave: 'login', ventanaMs: 60 * 1000, max: 10 }),
-    (req: Request, res: Response): void => {
+    asyncero(async (req: Request, res: Response): Promise<void> => {
       const identificador = String(req.body?.identificador ?? req.body?.nombre ?? '').trim();
       const password = String(req.body?.password ?? '');
 
-      const fila = db
-        .prepare(
-          `SELECT id, nombre, nombre_completo, email, telefono, color, saldo, password_hash,
-                  dos_factores, pregunta_seguridad, respuesta_seguridad_hash, kyc_estado
-           FROM usuarios WHERE (nombre = ? COLLATE NOCASE OR email = ? COLLATE NOCASE)`
-        )
-        .get(identificador, identificador) as FilaUsuario | undefined;
-
-      if (!fila || !verificarPassword(password, fila.password_hash)) {
+      const perfil = await buscarPerfilPorIdentificador(db, identificador);
+      if (!perfil?.email) {
+        res.status(401).json({ error: 'credenciales_invalidas' });
+        return;
+      }
+      const sesion = await anon().auth.signInWithPassword({ email: perfil.email, password });
+      if (sesion.error || !sesion.data.session) {
         res.status(401).json({ error: 'credenciales_invalidas' });
         return;
       }
 
-      if (fila.dos_factores === 1 && fila.telefono) {
-        const codigo = registrarOtp(db, fila.telefono);
-        enviarSms(fila.telefono, codigo);
+      if (perfil.dos_factores === 1 && perfil.telefono) {
+        // Guarda la sesión para el segundo paso y envía el OTP por SMS.
+        await db.ejecutar(
+          `INSERT INTO sessions_pendientes (auth_uid, access_token, creado_en)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (auth_uid) DO UPDATE SET access_token = EXCLUDED.access_token, creado_en = EXCLUDED.creado_en`,
+          [perfil.auth_uid, sesion.data.session.access_token, ahora()],
+        );
+        const codigo = await registrarOtp(db, perfil.telefono);
+        enviarSms(perfil.telefono, codigo);
         res.json({
           requiere2fa: true,
-          telefonoEnmascarado: enmascararTelefono(fila.telefono),
+          telefonoEnmascarado: enmascararTelefono(perfil.telefono),
           demo: !process.env.SMS_PROVIDER,
           codigo: process.env.SMS_PROVIDER ? undefined : codigo,
         });
         return;
       }
 
-      res.json({ token: firmarToken(fila.id), usuario: serializarUsuario(fila) });
-    },
+      res.json({ token: sesion.data.session.access_token, usuario: serializarUsuario(perfil) });
+    }),
   );
 
   // POST /auth/login/2fa { identificador, codigo } → completa el login con el OTP.
   r.post(
     '/login/2fa',
     limitador({ clave: 'login-2fa', ventanaMs: 60 * 1000, max: 5 }),
-    (req: Request, res: Response): void => {
+    asyncero(async (req: Request, res: Response): Promise<void> => {
       const identificador = String(req.body?.identificador ?? req.body?.nombre ?? '').trim();
       const codigo = String(req.body?.codigo ?? '');
 
-      const fila = db
-        .prepare(
-          `SELECT id, telefono FROM usuarios WHERE (nombre = ? COLLATE NOCASE OR email = ? COLLATE NOCASE)`
-        )
-        .get(identificador, identificador) as { id: number; telefono: string | null } | undefined;
-      if (!fila || !fila.telefono) {
+      const perfil = await buscarPerfilPorIdentificador(db, identificador);
+      if (!perfil?.telefono) {
         res.status(401).json({ error: 'credenciales_invalidas' });
         return;
       }
-      const resultado = verificarYCOnsumirOtp(db, fila.telefono, codigo);
+      const resultado = await verificarYConsumirOtp(db, perfil.telefono, codigo);
       if (resultado !== 'ok') {
         res.status(400).json({ error: resultado === 'expirado' ? 'otp_expirado' : 'otp_invalido' });
         return;
       }
-      const usuario = cargarUsuario(db, fila.id) as FilaUsuario;
-      res.json({ token: firmarToken(fila.id), usuario: serializarUsuario(usuario) });
-    },
+      const pendiente = await db.one<{ access_token: string }>(
+        'SELECT access_token FROM sessions_pendientes WHERE auth_uid = $1',
+        [perfil.auth_uid],
+      );
+      if (!pendiente) {
+        res.status(401).json({ error: 'credenciales_invalidas' });
+        return;
+      }
+      res.json({ token: pendiente.access_token, usuario: serializarUsuario(perfil) });
+    }),
   );
 
   // POST /auth/recuperar
@@ -400,7 +440,7 @@ export function crearRouterAuth(db: Db): Router {
   r.post(
     '/recuperar',
     limitador({ clave: 'recuperar', ventanaMs: 60 * 1000, max: 5 }),
-    (req: Request, res: Response): void => {
+    asyncero(async (req: Request, res: Response): Promise<void> => {
       const nuevoPassword = String(req.body?.nuevoPassword ?? '');
       if (nuevoPassword.length > 0 && !esPasswordFuerte(nuevoPassword)) {
         res.status(400).json({ error: 'password_debil' });
@@ -420,21 +460,28 @@ export function crearRouterAuth(db: Db): Router {
           res.status(400).json({ error: 'telefono_invalido' });
           return;
         }
-        const fila = db.prepare('SELECT id FROM usuarios WHERE telefono = ?').get(telefono) as
-          | { id: number }
-          | undefined;
-        if (!fila) {
+        const perfil = await db.one<FilaPerfil>('SELECT * FROM perfiles WHERE telefono = $1', [telefono]);
+        if (!perfil?.email) {
           res.status(404).json({ error: 'usuario_no_encontrado' });
           return;
         }
-        const resultado = verificarYCOnsumirOtp(db, telefono, codigoOtp);
+        const resultado = await verificarYConsumirOtp(db, telefono, codigoOtp);
         if (resultado !== 'ok') {
           res.status(400).json({ error: resultado === 'expirado' ? 'otp_expirado' : 'otp_invalido' });
           return;
         }
-        db.prepare('UPDATE usuarios SET password_hash = ? WHERE id = ?').run(hashPassword(nuevoPassword), fila.id);
-        const usuario = cargarUsuario(db, fila.id) as FilaUsuario;
-        res.json({ token: firmarToken(fila.id), usuario: serializarUsuario(usuario) });
+        const cambio = await admin().auth.admin.updateUserById(perfil.auth_uid, { password: nuevoPassword });
+        if (cambio.error) {
+          res.status(500).json({ error: 'error_interno' });
+          return;
+        }
+        const sesion = await anon().auth.signInWithPassword({ email: perfil.email, password: nuevoPassword });
+        if (sesion.error || !sesion.data.session) {
+          res.status(500).json({ error: 'error_interno' });
+          return;
+        }
+        const fila = await cargarPerfil(db, perfil.id);
+        res.json({ token: sesion.data.session.access_token, usuario: fila ? serializarUsuario(fila) : undefined });
         return;
       }
 
@@ -446,30 +493,32 @@ export function crearRouterAuth(db: Db): Router {
         res.status(400).json({ error: 'pregunta_seguridad_invalida' });
         return;
       }
-      const fila = db
-        .prepare(
-          `SELECT id, pregunta_seguridad, respuesta_seguridad_hash FROM usuarios
-           WHERE (nombre = ? COLLATE NOCASE OR email = ? COLLATE NOCASE)`
-        )
-        .get(identificador, identificador) as
-        | { id: number; pregunta_seguridad: string | null; respuesta_seguridad_hash: string | null }
-        | undefined;
-      if (!fila) {
+      const perfil = await buscarPerfilPorIdentificador(db, identificador);
+      if (!perfil?.email) {
         res.status(404).json({ error: 'usuario_no_encontrado' });
         return;
       }
-      if (fila.pregunta_seguridad !== preguntaSeguridad) {
+      if (perfil.pregunta_seguridad !== preguntaSeguridad) {
         res.status(400).json({ error: 'respuesta_seguridad_invalida' });
         return;
       }
-      if (!verificarRespuestaSeguridad(respuestaSeguridad, fila.respuesta_seguridad_hash)) {
+      if (!verificarRespuestaSeguridad(respuestaSeguridad, perfil.respuesta_seguridad_hash)) {
         res.status(400).json({ error: 'respuesta_seguridad_invalida' });
         return;
       }
-      db.prepare('UPDATE usuarios SET password_hash = ? WHERE id = ?').run(hashPassword(nuevoPassword), fila.id);
-      const usuario = cargarUsuario(db, fila.id) as FilaUsuario;
-      res.json({ token: firmarToken(fila.id), usuario: serializarUsuario(usuario) });
-    },
+      const cambio = await admin().auth.admin.updateUserById(perfil.auth_uid, { password: nuevoPassword });
+      if (cambio.error) {
+        res.status(500).json({ error: 'error_interno' });
+        return;
+      }
+      const sesion = await anon().auth.signInWithPassword({ email: perfil.email, password: nuevoPassword });
+      if (sesion.error || !sesion.data.session) {
+        res.status(500).json({ error: 'error_interno' });
+        return;
+      }
+      const fila = await cargarPerfil(db, perfil.id);
+      res.json({ token: sesion.data.session.access_token, usuario: fila ? serializarUsuario(fila) : undefined });
+    }),
   );
 
   return r;

@@ -1,11 +1,12 @@
 // server/src/auth.ts
-// Hash de PIN y contraseña, OTP, firma/verificación de JWT y middleware de autenticación.
+// Hash de contraseñas, OTP y preguntas de seguridad, verificación del JWT de
+// Supabase Auth y middleware de autenticación.
 
 import crypto from 'crypto';
 import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { Db } from './db';
+import { verToken } from './supabase';
 
 export interface UsuarioAutenticado {
   id: number;
@@ -36,7 +37,6 @@ export function verificarRespuestaSeguridad(respuesta: string, hash: string | nu
   return bcrypt.compareSync(respuesta.trim().toLowerCase(), hash);
 }
 
-const SECRETO = process.env.JWT_SECRET ?? 'domino-secreto-desarrollo';
 const RONDAS = 10;
 
 export const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -46,14 +46,6 @@ export const PASSWORD_MAX = 128;
 export const EDAD_MINIMA = 18;
 export const OTP_DIGITOS = 6;
 export const OTP_VALIDEZ_MS = 10 * 60 * 1000;
-
-export function hashPin(pin: string): string {
-  return bcrypt.hashSync(pin, RONDAS);
-}
-
-export function verificarPin(pin: string, hash: string): boolean {
-  return bcrypt.compareSync(pin, hash);
-}
 
 export function hashPassword(password: string): string {
   return bcrypt.hashSync(password, RONDAS);
@@ -113,19 +105,6 @@ export function verificarOtp(codigo: string, hash: string): boolean {
   return bcrypt.compareSync(codigo, hash);
 }
 
-export function firmarToken(usuarioId: number): string {
-  return jwt.sign({ uid: usuarioId }, SECRETO, { expiresIn: '7d' });
-}
-
-export function verToken(token: string): { uid: number } | null {
-  try {
-    const datos = jwt.verify(token, SECRETO) as { uid: number };
-    return typeof datos.uid === 'number' ? datos : null;
-  } catch {
-    return null;
-  }
-}
-
 export function serializarUsuario(fila: {
   id: number;
   nombre: string;
@@ -148,27 +127,40 @@ export function serializarUsuario(fila: {
   };
 }
 
-// Middleware: exige header `Authorization: Bearer <token>` y adjunta req.usuario.
+// Middleware: exige header `Authorization: Bearer <token de Supabase>` y
+// adjunta req.usuario resolviendo el perfil por el `sub` del token.
 export function requiereAuth(db: Db) {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    const header = req.headers.authorization;
-    if (!header || !header.startsWith('Bearer ')) {
-      res.status(401).json({ error: 'no_autenticado' });
-      return;
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const header = req.headers.authorization;
+      if (!header || !header.startsWith('Bearer ')) {
+        res.status(401).json({ error: 'no_autenticado' });
+        return;
+      }
+      const datos = await verToken(header.slice(7));
+      if (!datos) {
+        res.status(401).json({ error: 'token_invalido' });
+        return;
+      }
+      const fila = await db.one<{
+        id: number;
+        nombre: string;
+        color: string;
+        saldo: number;
+        kyc_estado: string;
+        foto?: string | null;
+      }>(
+        'SELECT id, nombre, color, saldo, kyc_estado, foto_url AS foto FROM perfiles WHERE auth_uid = $1',
+        [datos.uid],
+      );
+      if (!fila) {
+        res.status(401).json({ error: 'usuario_no_existe' });
+        return;
+      }
+      (req as Request & { usuario: UsuarioAutenticado }).usuario = serializarUsuario(fila);
+      next();
+    } catch (e) {
+      next(e as Error);
     }
-    const datos = verToken(header.slice(7));
-    if (!datos) {
-      res.status(401).json({ error: 'token_invalido' });
-      return;
-    }
-    const fila = db.prepare('SELECT id, nombre, color, saldo, kyc_estado, foto FROM usuarios WHERE id = ?').get(datos.uid) as
-      | { id: number; nombre: string; color: string; saldo: number; kyc_estado: string; foto?: string | null }
-      | undefined;
-    if (!fila) {
-      res.status(401).json({ error: 'usuario_no_existe' });
-      return;
-    }
-    (req as Request & { usuario: UsuarioAutenticado }).usuario = serializarUsuario(fila);
-    next();
   };
 }
