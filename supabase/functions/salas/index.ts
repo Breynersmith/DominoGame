@@ -25,7 +25,7 @@ import {
 } from '../_shared/sala.ts';
 
 const db = new Db();
-const r = new Enrutador(db);
+const r = new Enrutador(db, 'salas');
 
 // POST /salas { nombre, apuesta } -> crear sala
 r.post('/', true, async (ctx: Contexto): Promise<Response> => {

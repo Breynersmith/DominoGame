@@ -30,6 +30,7 @@ export function SetupScreen() {
   const irA = useAppStore(s => s.irA);
   const perfil = useAppStore(s => s.perfil);
   const saldo = useAppStore(s => s.saldo);
+  const esInvitado = !perfil;
   const salaConfig = useAppStore(s => s.salaConfig);
   const colorPara = (i: number) =>
     i === 0 ? perfil?.color ?? COLORES[0] : COLORES[i % COLORES.length];
@@ -113,7 +114,12 @@ export function SetupScreen() {
             </Text>
           </Pressable>
           <Pressable
-            style={[styles.cardModo, modoJuego === 'online' && styles.cardModoActivo]}
+            style={[
+              styles.cardModo,
+              modoJuego === 'online' && styles.cardModoActivo,
+              esInvitado && styles.cardModoDeshabilitado,
+            ]}
+            disabled={esInvitado}
             onPress={() => {
               setModoJuego('online');
               irA('lobby');
@@ -125,6 +131,7 @@ export function SetupScreen() {
             </Text>
           </Pressable>
         </View>
+        {esInvitado && <Text style={styles.textoRequiereRegistro}>{t('requiereRegistro')}</Text>}
 
         {salaConfig && salaConfig.codigo ? (
           <View style={styles.bannerSala}>
@@ -410,6 +417,16 @@ const styles = StyleSheet.create({
   },
   textoModoActivo: {
     color: COLOR_MENTA,
+  },
+  cardModoDeshabilitado: {
+    opacity: 0.4,
+  },
+  textoRequiereRegistro: {
+    color: COLOR_AMBAR,
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 8,
   },
   seccion: {
     marginTop: 24,

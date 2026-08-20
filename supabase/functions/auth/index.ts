@@ -66,8 +66,8 @@ function enviarSms(telefono: string, codigo: string): void {
 }
 
 // En demo se devuelve el código en la respuesta para poder probar el flujo.
-function codigoDemo(codigo: string): { demo: boolean; codigo?: string } {
-  return proveedorSms() ? { demo: false } : { demo: true, codigo };
+function codigoDemo(codigo: string, proveedor: boolean): { demo: boolean; codigo?: string } {
+  return proveedor ? { demo: false } : { demo: true, codigo };
 }
 
 async function registrarOtp(db: Db, telefono: string): Promise<string> {
@@ -77,32 +77,6 @@ async function registrarOtp(db: Db, telefono: string): Promise<string> {
     [telefono, hashOtp(codigo), ahora() + OTP_VALIDEZ_MS, ahora()],
   );
   return codigo;
-}
-
-async function registrarOtpEmail(db: Db, email: string): Promise<string> {
-  const codigo = generarCodigoOtp();
-  await db.ejecutar(
-    'INSERT INTO codigos_otp (telefono, email, codigo_hash, expira_en, creado_en) VALUES ($1, $2, $3, $4, $5)',
-    ['', email, hashOtp(codigo), ahora() + OTP_VALIDEZ_MS, ahora()],
-  );
-  return codigo;
-}
-
-async function verificarYConsumirOtpEmail(
-  db: Db,
-  email: string,
-  codigo: string,
-): Promise<'ok' | 'invalido' | 'expirado'> {
-  const fila = await db.one<{ id: number; codigo_hash: string; consumido: number; expira_en: number }>(
-    'SELECT id, codigo_hash, consumido, expira_en FROM codigos_otp WHERE email = $1 ORDER BY id DESC LIMIT 1',
-    [email],
-  );
-  if (!fila) return 'invalido';
-  if (fila.consumido === 1) return 'invalido';
-  if (ahora() > fila.expira_en) return 'expirado';
-  if (!verificarOtp(codigo, fila.codigo_hash)) return 'invalido';
-  await db.ejecutar('UPDATE codigos_otp SET consumido = 1 WHERE id = $1', [fila.id]);
-  return 'ok';
 }
 
 async function verificarYConsumirOtp(
@@ -142,6 +116,45 @@ interface DatosCrearCuenta {
   dosFactores: number;
 }
 
+async function crearPerfilDesdeDatos(
+  db: Db,
+  authUid: string,
+  datos: DatosCrearCuenta,
+): Promise<{ fila?: FilaPerfil; status?: number; error?: string }> {
+  const info = await db.one<{ id: number }>(
+    `INSERT INTO perfiles
+       (auth_uid, nombre, nombre_completo, email, telefono, fecha_nacimiento, pais,
+        terminos_aceptados_en, pregunta_seguridad, respuesta_seguridad_hash, dos_factores,
+        color, saldo, creado_en)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+     RETURNING id`,
+    [
+      authUid,
+      datos.nombre,
+      datos.nombreCompleto,
+      datos.email,
+      datos.telefono,
+      datos.fechaNacimiento,
+      datos.pais,
+      datos.terminosAceptadosEn,
+      datos.preguntaSeguridad,
+      datos.respuestaSeguridad ? hashRespuestaSeguridad(datos.respuestaSeguridad) : null,
+      datos.dosFactores,
+      datos.color,
+      1000,
+      ahora(),
+    ],
+  );
+  if (!info) {
+    return { status: 500, error: 'error_interno' };
+  }
+  const fila = await cargarPerfil(db, info.id);
+  if (!fila) {
+    return { status: 500, error: 'error_interno' };
+  }
+  return { fila };
+}
+
 async function crearCuenta(
   db: Db,
   datos: DatosCrearCuenta,
@@ -172,50 +185,23 @@ async function crearCuenta(
   }
   const authUid = creado.user.id;
 
-  const info = await db.one<{ id: number }>(
-    `INSERT INTO perfiles
-       (auth_uid, nombre, nombre_completo, email, telefono, fecha_nacimiento, pais,
-        terminos_aceptados_en, pregunta_seguridad, respuesta_seguridad_hash, dos_factores,
-        color, saldo, creado_en)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-     RETURNING id`,
-    [
-      authUid,
-      datos.nombre,
-      datos.nombreCompleto,
-      datos.email,
-      datos.telefono,
-      datos.fechaNacimiento,
-      datos.pais,
-      datos.terminosAceptadosEn,
-      datos.preguntaSeguridad,
-      datos.respuestaSeguridad ? hashRespuestaSeguridad(datos.respuestaSeguridad) : null,
-      datos.dosFactores,
-      datos.color,
-      1000,
-      ahora(),
-    ],
-  );
-  if (!info) {
-    return { status: 500, cuerpo: { error: 'error_interno' } };
+  const perfil = await crearPerfilDesdeDatos(db, authUid, datos);
+  if (!perfil.fila) {
+    return { status: perfil.status ?? 500, cuerpo: { error: perfil.error ?? 'error_interno' } };
   }
 
   const sesion = await anon().auth.signInWithPassword({ email: datos.email, password: datos.password });
   if (sesion.error || !sesion.data.session) {
     return { status: 500, cuerpo: { error: 'error_interno' } };
   }
-  const fila = await cargarPerfil(db, info.id);
-  if (!fila) {
-    return { status: 500, cuerpo: { error: 'error_interno' } };
-  }
   return {
     status: 201,
-    cuerpo: { token: sesion.data.session.access_token, usuario: serializarUsuario(fila) },
+    cuerpo: { token: sesion.data.session.access_token, usuario: serializarUsuario(perfil.fila) },
   };
 }
 
 const db = new Db();
-const r = new Enrutador(db);
+const r = new Enrutador(db, 'auth');
 
 // //__RUTAS_1__//
 // POST /auth/sms/enviar { telefono } → genera y envía un OTP.
@@ -229,7 +215,7 @@ r.post('/sms/enviar', false, async (ctx: Contexto): Promise<Response> => {
   }
   const codigo = await registrarOtp(db, telefono);
   enviarSms(telefono, codigo);
-  return json({ ok: true, ...codigoDemo(codigo) });
+  return json({ ok: true, ...codigoDemo(codigo, proveedorSms()) });
 });
 
 // POST /auth/sms/verificar { telefono, codigo } → marca el teléfono como verificado.
@@ -388,7 +374,7 @@ r.post('/login', false, async (ctx: Contexto): Promise<Response> => {
     return json({
       requiere2fa: true,
       telefonoEnmascarado: enmascararTelefono(perfil.telefono),
-      ...codigoDemo(codigo),
+      ...codigoDemo(codigo, proveedorSms()),
     });
   }
 
@@ -493,7 +479,7 @@ r.post('/recuperar', false, async (ctx: Contexto): Promise<Response> => {
   return json({ token: sesion.data.session.access_token, usuario: fila ? serializarUsuario(fila) : undefined });
 });
 
-// POST /auth/email/enviar { email } → genera y envía un OTP por correo.
+// POST /auth/email/enviar { email } → envía el OTP por correo vía Supabase Auth.
 r.post('/email/enviar', false, async (ctx: Contexto): Promise<Response> => {
   if (!permitido({ clave: 'email-enviar', ventanaMs: 60 * 1000, max: 3 }, ctx.req)) {
     return errorJson('demasiadas_peticiones', 429);
@@ -502,10 +488,16 @@ r.post('/email/enviar', false, async (ctx: Contexto): Promise<Response> => {
   if (!esEmailValido(email)) {
     return errorJson('email_invalido');
   }
-  const codigo = await registrarOtpEmail(db, email);
-  // TODO: integración con el proveedor de correo.
-  console.log(`[email] ${email}: ${codigo}`);
-  return json({ ok: true, ...codigoDemo(codigo) });
+  const { error } = await anon().auth.signInWithOtp({
+    email,
+    options: { shouldCreateUser: true },
+  });
+  if (error) {
+    if (error.status === 422) return errorJson('email_invalido', 400);
+    console.error('[auth] signInWithOtp', error.message);
+    return errorJson('error_envio', 500);
+  }
+  return json({ ok: true, demo: false });
 });
 
 // POST /auth/registro-facil { nombre, email, password, codigoOtp, color? }
@@ -535,15 +527,26 @@ r.post('/registro-facil', false, async (ctx: Contexto): Promise<Response> => {
     return errorJson('email_en_uso', 409);
   }
 
-  const otpResultado = await verificarYConsumirOtpEmail(db, email, codigoOtp);
-  if (otpResultado === 'invalido') {
+  const { data: sesionOtp, error: errorOtp } = await anon().auth.verifyOtp({
+    email,
+    token: codigoOtp,
+    type: 'email',
+  });
+  if (errorOtp || !sesionOtp?.session) {
     return errorJson('otp_invalido');
   }
-  if (otpResultado === 'expirado') {
-    return errorJson('otp_expirado');
+  const authUid = sesionOtp.session.user.id;
+
+  const { error: errorPassword } = await admin().auth.admin.updateUserById(authUid, {
+    password,
+    email_confirm: true,
+    user_metadata: { nombre },
+  });
+  if (errorPassword) {
+    return errorJson('error_interno', 500);
   }
 
-  const res = await crearCuenta(db, {
+  const perfil = await crearPerfilDesdeDatos(db, authUid, {
     nombre,
     nombreCompleto: nombre,
     email,
@@ -557,7 +560,13 @@ r.post('/registro-facil', false, async (ctx: Contexto): Promise<Response> => {
     respuestaSeguridad: null,
     dosFactores: 0,
   });
-  return json(res.cuerpo, res.status);
+  if (!perfil.fila) {
+    return errorJson(perfil.error ?? 'error_interno', perfil.status ?? 500);
+  }
+  return json({
+    token: sesionOtp.session.access_token,
+    usuario: serializarUsuario(perfil.fila),
+  });
 });
 
 // POST /auth/verificar-cuenta (requiere token)

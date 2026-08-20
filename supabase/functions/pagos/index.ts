@@ -11,7 +11,7 @@ const TIPOS_PAGO = ['tarjeta', 'paypal', 'cripto'] as const;
 const PAGOS_MAX = 5;
 
 const db = new Db();
-const r = new Enrutador(db);
+const r = new Enrutador(db, 'pagos');
 
 // GET /pagos → lista de métodos de pago del usuario.
 r.get('/', true, async (ctx: Contexto): Promise<Response> => {

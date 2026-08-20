@@ -152,6 +152,7 @@ export interface Traducciones {
   lobby: string;
   jugarVsBot: string;
   multijugador: string;
+  requiereRegistro: string;
   jugarConAmigo: string;
   invitar: string;
   invitacionEnviada: string;
@@ -430,6 +431,7 @@ const es: Traducciones = {
   lobby: 'Lobby',
   jugarVsBot: 'Jugar vs bot',
   multijugador: 'Multijugador',
+  requiereRegistro: 'Regístrate para jugar multijugador',
   jugarConAmigo: 'Jugar con un amigo',
   invitar: 'Invitar',
   invitacionEnviada: 'Invitación enviada',
@@ -710,6 +712,7 @@ const en: Traducciones = {
   lobby: 'Lobby',
   jugarVsBot: 'Play vs bot',
   multijugador: 'Multiplayer',
+  requiereRegistro: 'Sign up to play multiplayer',
   jugarConAmigo: 'Play with a friend',
   invitar: 'Invite',
   invitacionEnviada: 'Invitation sent',
@@ -990,6 +993,7 @@ const cat: Traducciones = {
   lobby: 'Lobby',
   jugarVsBot: 'Jugar contra bot',
   multijugador: 'Multijugador',
+  requiereRegistro: 'Registra\'t per jugar multijugador',
   jugarConAmigo: 'Jugar amb un amic',
   invitar: 'Convida',
   invitacionEnviada: 'Invitació enviada',

@@ -15,6 +15,7 @@
         "npm:@expo-google-fonts/montserrat@~0.4.2",
         "npm:@expo/metro-runtime@~6.1.2",
         "npm:@react-native-async-storage/async-storage@2.2.0",
+        "npm:@supabase/supabase-js@^2.112.3",
         "npm:@testing-library/react-native@^14.0.1",
         "npm:@types/jest@^29.5.14",
         "npm:@types/react@19.1",
@@ -31,7 +32,6 @@
         "npm:react-native-web@0.21",
         "npm:react-native@0.81.5",
         "npm:react@19.1.0",
-        "npm:socket.io-client@^4.8.3",
         "npm:typescript@~5.9.2",
         "npm:zustand@^5.0.15"
       ]

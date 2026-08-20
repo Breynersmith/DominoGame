@@ -13,7 +13,9 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://dominoserver.onrender.com"
+        "EXPO_PUBLIC_API_URL": "https://kmtvcscnositvsjbnpum.supabase.co/functions/v1",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://kmtvcscnositvsjbnpum.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_8upwc0TBfc-hGBe4iMhCNw_UFU1Ufbb"
       }
     },
     "production": {
@@ -22,7 +24,9 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://dominoserver.onrender.com"
+        "EXPO_PUBLIC_API_URL": "https://kmtvcscnositvsjbnpum.supabase.co/functions/v1",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://kmtvcscnositvsjbnpum.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_8upwc0TBfc-hGBe4iMhCNw_UFU1Ufbb"
       }
     }
   },

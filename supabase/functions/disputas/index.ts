@@ -6,7 +6,7 @@ import { Enrutador, Contexto } from '../_shared/http.ts';
 import { json, errorJson } from '../_shared/respuesta.ts';
 
 const db = new Db();
-const r = new Enrutador(db);
+const r = new Enrutador(db, 'disputas');
 
 // POST /disputas { mensaje }
 r.post('/', true, async (ctx: Contexto): Promise<Response> => {

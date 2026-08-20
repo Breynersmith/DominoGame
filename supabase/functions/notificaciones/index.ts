@@ -6,7 +6,7 @@ import { Enrutador, Contexto } from '../_shared/http.ts';
 import { json, errorJson } from '../_shared/respuesta.ts';
 
 const db = new Db();
-const r = new Enrutador(db);
+const r = new Enrutador(db, 'notificaciones');
 
 async function notificacionesDe(usuarioId: number): Promise<unknown[]> {
   return db.query(

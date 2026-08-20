@@ -10,7 +10,7 @@ const FOTO_REGEX = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
 const FOTO_MAX = 500_000;
 
 const db = new Db();
-const r = new Enrutador(db);
+const r = new Enrutador(db, 'usuarios');
 
 // GET /usuarios/yo -> perfil + saldo + transacciones
 r.get('/yo', true, async (ctx: Contexto): Promise<Response> => {

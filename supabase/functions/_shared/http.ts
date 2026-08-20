@@ -27,7 +27,10 @@ interface Ruta {
 export class Enrutador {
   private rutas: Ruta[] = [];
 
-  constructor(private db: Db) {}
+  constructor(
+    private db: Db,
+    private nombre?: string,
+  ) {}
 
   get(ruta: string, auth: boolean, handler: (ctx: Contexto) => Respuesta): void {
     this.agregar('GET', ruta, auth, handler);
@@ -49,6 +52,18 @@ export class Enrutador {
     this.rutas.push({ metodo, partes: ruta.split('/').filter(Boolean), handler, auth });
   }
 
+  // Normaliza el path: la pasarela reescribe la URL como `http://<ref>.supabase.co/<slug>/<resto>`
+  // (y también puede llegar como `/functions/v1/<slug>/<resto>`). Deja la ruta relativa a la función.
+  private normalizar(camino: string): string {
+    const partes = camino.split('/').filter(Boolean);
+    if (this.nombre && partes[0] === this.nombre) {
+      return `/${partes.slice(1).join('/')}`;
+    }
+    const m = camino.match(/^\/functions\/v1\/[^/]+(?:\/(.*))?$/);
+    if (m) return `/${m[1] ?? ''}`;
+    return camino;
+  }
+
   async manejar(req: Request): Promise<Response> {
     // Preflight CORS
     if (req.method === 'OPTIONS') {
@@ -56,11 +71,7 @@ export class Enrutador {
     }
 
     const url = new URL(req.url);
-    let camino = url.pathname;
-    // Quitar el prefijo /functions/v1/<nombre> si está presente (la ruta que
-    // ve la función es el resto del path).
-    const m = camino.match(/^\/functions\/v1\/[^/]+(?:\/(.*))?$/);
-    if (m) camino = `/${m[1] ?? ''}`;
+    const camino = this.normalizar(url.pathname);
     const partes = camino.split('/').filter(Boolean);
 
     let cuerpo: Record<string, unknown> | undefined;

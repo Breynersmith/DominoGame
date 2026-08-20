@@ -483,6 +483,33 @@ export async function empezar(
       ahora(),
     ],
   );
+
+  const filaPartida: PartidaRow = {
+    codigo,
+    opciones: { robarPozo, fichasPorJugador: fichas },
+    estado,
+    jugadores,
+    apuesta,
+    pagada: 0,
+    humanos_inicio: miembros.length,
+    resultado: null,
+    creado_en: ahora(),
+    actualizado_en: ahora(),
+  };
+  // Si el turno inicial cae en un bot, resuélvelo de forma síncrona hasta
+  // llegar al primer humano (o finalizar), igual que en las acciones de juego.
+  const avance = await resolverAvance(db, codigo, filaPartida);
+  filaPartida.estado = avance.estado;
+  if (avance.terminada) {
+    await finalizar(db, codigo, filaPartida);
+  } else if (avance.estado !== estado) {
+    await db.ejecutar('UPDATE partidas SET estado = $1::jsonb, actualizado_en = $2 WHERE codigo = $3', [
+      JSON.stringify(avance.estado),
+      ahora(),
+      codigo,
+    ]);
+  }
+
   await db.ejecutar("UPDATE salas SET estado = 'jugando', ultimo_cambio = $1 WHERE codigo = $2", [ahora(), codigo]);
   await guardarSnapshot(db, codigo, snapshotSala(sala, miembros, true), null);
 

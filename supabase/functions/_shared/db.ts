@@ -11,8 +11,8 @@ export interface Fila {
 
 // Interfaz mínima de consulta usada por las funciones (Db y transacciones).
 export interface Conexion {
-  query<T = Fila>(text: string, params?: unknown[]): Promise<T[]>;
-  one<T = Fila>(text: string, params?: unknown[]): Promise<T | undefined>;
+  query<T extends object = Fila>(text: string, params?: unknown[]): Promise<T[]>;
+  one<T extends object = Fila>(text: string, params?: unknown[]): Promise<T | undefined>;
   ejecutar(text: string, params?: unknown[]): Promise<{ rowCount: number }>;
   transaccion<T>(fn: (db: Conexion) => Promise<T>): Promise<T>;
 }
@@ -49,19 +49,43 @@ function sql(): postgres.Sql<{}> {
   return _sql;
 }
 
+// En el edge runtime, postgres.js devuelve las columnas jsonb como string
+// cuando el planificador las envía en formato binario. Como nuestras columnas
+// jsonb siempre guardan objetos/arrays, se reconstruyen aquí de forma segura.
+function deserializar(valor: unknown): unknown {
+  if (typeof valor === 'string' && (valor.startsWith('{') || valor.startsWith('['))) {
+    try {
+      return JSON.parse(valor);
+    } catch {
+      return valor;
+    }
+  }
+  return valor;
+}
+
+function deserializarFilas<T extends object>(filas: T[]): T[] {
+  return filas.map((fila) => {
+    const res: Record<string, unknown> = {};
+    for (const [clave, valor] of Object.entries(fila)) {
+      res[clave] = deserializar(valor);
+    }
+    return res as T;
+  });
+}
+
 export class Db implements Conexion {
-  async query<T = Fila>(text: string, params: unknown[] = []): Promise<T[]> {
-    const r = (await sql().unsafe(text, ...(params as never[]))) as unknown as T[];
-    return Array.isArray(r) ? r : [];
+  async query<T extends object = Fila>(text: string, params: unknown[] = []): Promise<T[]> {
+    const r = (await sql().unsafe(text, params as never[])) as unknown as T[];
+    return Array.isArray(r) ? deserializarFilas<T>(r) : [];
   }
 
-  async one<T = Fila>(text: string, params: unknown[] = []): Promise<T | undefined> {
+  async one<T extends object = Fila>(text: string, params: unknown[] = []): Promise<T | undefined> {
     const r = await this.query<T>(text, params);
     return r[0];
   }
 
   async ejecutar(text: string, params: unknown[] = []): Promise<{ rowCount: number }> {
-    const r = await sql().unsafe(text, ...(params as never[]));
+    const r = await sql().unsafe(text, params as never[]);
     const filas = Array.isArray(r) ? r : [];
     return { rowCount: filas.length };
   }
@@ -69,14 +93,17 @@ export class Db implements Conexion {
   async transaccion<T>(fn: (db: Conexion) => Promise<T>): Promise<T> {
     return (await sql().begin(async (tx) => {
       const dbTx: Conexion = {
-        query: async <R = Fila>(t: string, p: unknown[] = []) =>
-          (await tx.unsafe(t, ...(p as never[]))) as unknown as R[],
-        one: async <R = Fila>(t: string, p: unknown[] = []) => {
-          const filas = await tx.unsafe(t, ...(p as never[]));
-          return (Array.isArray(filas) ? (filas as unknown as R[]) : [])[0];
+        query: async <R extends object = Fila>(t: string, p: unknown[] = []) => {
+          const r = (await tx.unsafe(t, p as never[])) as unknown as R[];
+          return (Array.isArray(r) ? deserializarFilas<R>(r) : []) as R[];
+        },
+        one: async <R extends object = Fila>(t: string, p: unknown[] = []) => {
+          const filas = await tx.unsafe(t, p as never[]);
+          const r = Array.isArray(filas) ? (filas as unknown as R[]) : [];
+          return deserializarFilas<R>(r)[0];
         },
         ejecutar: async (t: string, p: unknown[] = []) => {
-          const filas = await tx.unsafe(t, ...(p as never[]));
+          const filas = await tx.unsafe(t, p as never[]);
           return { rowCount: (Array.isArray(filas) ? filas : []).length };
         },
         transaccion: <R>(fn2: (d: Conexion) => Promise<R>) => fn2(dbTx),

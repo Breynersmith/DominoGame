@@ -23,7 +23,11 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -38,6 +42,12 @@
           "cameraPermission": "La app accede a la cámara para tomar tu foto de perfil."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "073a206a-62fd-4ea0-b4e1-0db9924abc55"
+      }
+    },
+    "owner": "breydev"
   }
 }

@@ -13,7 +13,7 @@ const TIPOS_DOCUMENTO = ['dni', 'nie', 'pasaporte'] as const;
 const SELFIE_MAX = 3 * 1024 * 1024; // ~3 MB en base64
 
 const db = new Db();
-const r = new Enrutador(db);
+const r = new Enrutador(db, 'kyc');
 
 // POST /kyc { tipoDocumento, numeroDocumento, selfie } → queda en revisión.
 r.post('/', true, async (ctx: Contexto): Promise<Response> => {
