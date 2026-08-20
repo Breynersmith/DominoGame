@@ -12,8 +12,9 @@ const COLOR_MENTA = '#6FFBBE';
 const COLOR_PRIMARIO = '#003527';
 const COLOR_MENTA_CLARO = '#b0f0d6';
 
-// Patrón de puntos del dominó de la portada
-const PIPS: boolean[] = [true, false, false, true, false, true];
+// Patrón de puntos del dominó de la portada (ficha 6|2)
+const PIPS_SEIS: boolean[] = [true, true, true, true, true, true];
+const PIPS_DOS: boolean[] = [true, false, false, false, false, true];
 
 export function BienvenidaScreen() {
   const t = useT();
@@ -34,15 +35,37 @@ export function BienvenidaScreen() {
       <View style={styles.centro}>
         <View style={styles.bloqueLogo}>
           <View style={styles.tarjetaLogo}>
-            <View style={styles.rejilla}>
-              {PIPS.map((relleno, i) => (
-                <View
-                  key={i}
-                  style={[styles.punto, relleno ? styles.puntoRelleno : styles.puntoVacio]}
-                />
-              ))}
+            <View style={styles.mitad}>
+              <View style={styles.rejillaSeis}>
+                <View style={styles.filaSeis}>
+                  {PIPS_SEIS.slice(0, 3).map((relleno, i) => (
+                    <View
+                      key={i}
+                      style={[styles.punto, relleno ? styles.puntoRelleno : styles.puntoVacio]}
+                    />
+                  ))}
+                </View>
+                <View style={styles.filaSeis}>
+                  {PIPS_SEIS.slice(3, 6).map((relleno, i) => (
+                    <View
+                      key={i}
+                      style={[styles.punto, relleno ? styles.puntoRelleno : styles.puntoVacio]}
+                    />
+                  ))}
+                </View>
+              </View>
             </View>
             <View style={styles.divisorLogo} />
+            <View style={styles.mitad}>
+              <View style={styles.rejilla}>
+                {PIPS_DOS.map((relleno, i) => (
+                  <View
+                    key={i}
+                    style={[styles.punto, relleno ? styles.puntoRelleno : styles.puntoVacio]}
+                  />
+                ))}
+              </View>
+            </View>
           </View>
           <Text style={styles.tituloLogo}>
             DOMINO{'\n'}
@@ -135,9 +158,9 @@ const styles = StyleSheet.create({
     marginBottom: 40,
   },
   tarjetaLogo: {
-    width: 128,
-    height: 128,
-    borderRadius: 24,
+    width: 216,
+    height: 132,
+    borderRadius: 26,
     backgroundColor: '#efeeea',
     borderWidth: 4,
     borderColor: '#efeeea',
@@ -147,23 +170,42 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     elevation: 8,
     transform: [{ rotate: '-5deg' }],
-    alignItems: 'flex-start',
-    justifyContent: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: 20,
   },
+  mitad: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
   rejilla: {
-    width: 40,
-    height: 64,
+    width: 52,
+    height: 84,
     flexDirection: 'row',
     flexWrap: 'wrap',
-    columnGap: 8,
-    rowGap: 8,
-    padding: 16,
+    columnGap: 12,
+    rowGap: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rejillaSeis: {
+    width: 84,
+    height: 84,
+    flexDirection: 'column',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  filaSeis: {
+    flexDirection: 'row',
+    gap: 12,
   },
   punto: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
   },
   puntoRelleno: {
     backgroundColor: COLOR_PRIMARIO,
@@ -173,11 +215,11 @@ const styles = StyleSheet.create({
   },
   divisorLogo: {
     position: 'absolute',
-    top: '50%',
-    marginTop: -2,
-    left: 8,
-    right: 8,
-    height: 4,
+    left: '50%',
+    marginLeft: -2,
+    top: 10,
+    bottom: 10,
+    width: 4,
     backgroundColor: '#e4e2de',
     zIndex: 10,
   },

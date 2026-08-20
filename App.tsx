@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
-import { BackHandler, StyleSheet, View } from 'react-native';
+import { BackHandler, Platform, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Montserrat_700Bold, Montserrat_800ExtraBold } from '@expo-google-fonts/montserrat';
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-google-fonts/inter';
 import { AjustesScreen } from './src/screens/AjustesScreen';
@@ -30,11 +30,15 @@ import { useAppStore } from './src/store/appStore';
 import { useGameStore } from './src/store/gameStore';
 import { useOnlineStore } from './src/store/onlineStore';
 
+const ANCHO_COLUMNA = 500;
+
 export default function App() {
   const fase = useGameStore(s => s.fase);
   const vista = useAppStore(s => s.vista);
   const cargado = useAppStore(s => s.cargado);
   const cargar = useAppStore(s => s.cargar);
+  const { width } = useWindowDimensions();
+  const esWebGrande = Platform.OS === 'web' && width >= 640;
   const [fuentesCargadas] = useFonts({
     Montserrat_700Bold,
     Montserrat_800ExtraBold,
@@ -146,7 +150,7 @@ export default function App() {
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      {pantalla}
+      <View style={[styles.columna, esWebGrande && styles.columnaWeb]}>{pantalla}</View>
     </View>
   );
 }
@@ -155,5 +159,21 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#022416',
+    alignItems: 'center',
+  },
+  columna: {
+    flex: 1,
+    width: '100%',
+    maxWidth: ANCHO_COLUMNA,
+  },
+  columnaWeb: {
+    shadowColor: '#000',
+    shadowOpacity: 0.5,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 12,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: 'rgba(111,251,190,0.08)',
   },
 });

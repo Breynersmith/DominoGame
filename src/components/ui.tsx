@@ -1,5 +1,5 @@
 import React, { ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, TextInputProps, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, TextInput, TextInputProps, useWindowDimensions, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { IconoFlecha } from './icons/IconoFlecha';
 import { FONT_INTER_MEDIUM, FONT_INTER_SEMIBOLD, FONT_MONTSERRAT_EXTRA } from '../constants/fonts';
@@ -17,6 +17,12 @@ interface PantallaBaseProps {
 }
 
 export function PantallaBase({ titulo, onVolver, derecho, children, pie }: PantallaBaseProps) {
+  const { width } = useWindowDimensions();
+  const esWebGrande = Platform.OS === 'web' && width >= 640;
+  const paddingBarra = esWebGrande ? 16 : 30;
+  const paddingCuerpo = esWebGrande ? 32 : 100;
+  const paddingPie = esWebGrande ? 16 : 20;
+
   return (
     <LinearGradient
       colors={['#0A4A33', '#022416']}
@@ -27,7 +33,7 @@ export function PantallaBase({ titulo, onVolver, derecho, children, pie }: Panta
       <View style={styles.orbSupIzq} />
       <View style={styles.orbInfDer} />
       {titulo && (
-        <View style={styles.barra}>
+        <View style={[styles.barra, { paddingTop: paddingBarra }]}>
           <Pressable
             style={styles.botonVolver}
             onPress={onVolver}
@@ -42,8 +48,10 @@ export function PantallaBase({ titulo, onVolver, derecho, children, pie }: Panta
           <View style={styles.slotDerecho}>{derecho}</View>
         </View>
       )}
-      <View style={styles.cuerpo}>{children}</View>
-      {pie && <View style={styles.pie}>{pie}</View>}
+      <View style={[styles.cuerpo, { paddingTop: paddingCuerpo, paddingBottom: paddingCuerpo }]}>
+        {children}
+      </View>
+      {pie && <View style={[styles.pie, { paddingBottom: paddingPie }]}>{pie}</View>}
     </LinearGradient>
   );
 }

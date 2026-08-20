@@ -20,6 +20,7 @@ import { IDIOMAS, Traducciones } from '../i18n/traducciones';
 import { useT } from '../i18n/useT';
 import { useAppStore } from '../store/appStore';
 import { apiRegistroFacil, apiEnviarCodigoEmail, ErrorApi } from '../services/api';
+import { useResponsive } from '../hooks/useResponsive';
 
 const COLOR_MENTA = '#6FFBBE';
 const COLOR_DORADO = '#FACC15';
@@ -34,6 +35,7 @@ export function RegistroScreen() {
   const registrar = useAppStore(s => s.registrar);
   const actualizarAjustes = useAppStore(s => s.actualizarAjustes);
   const idioma = useAppStore(s => s.ajustes.idioma);
+  const { paddingBarra, paddingContenido, paddingPie } = useResponsive();
 
   const [nombre, setNombre] = useState('');
   const [email, setEmail] = useState('');
@@ -118,7 +120,7 @@ export function RegistroScreen() {
       end={{ x: 0.5, y: 1 }}
       style={styles.fondo}
     >
-      <View style={styles.barraSuperior}>
+      <View style={[styles.barraSuperior, { paddingTop: paddingBarra }]}>
         <View style={styles.botonIcono}>
           <IconoDado color={COLOR_DORADO} size={22} />
         </View>
@@ -127,7 +129,7 @@ export function RegistroScreen() {
       </View>
 
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={styles.contenido} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={[styles.contenido, { paddingTop: paddingContenido }]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <View style={styles.cabecera}>
             <Text style={styles.tituloCabecera}>{t('appName')}</Text>
             <Text style={styles.subtituloCabecera}>{t('crearCuenta')}</Text>
@@ -248,7 +250,7 @@ export function RegistroScreen() {
           colors={['rgba(2,36,22,0)', 'rgba(2,36,22,0.9)', '#022416']}
           start={{ x: 0, y: 0 }}
           end={{ x: 0, y: 1 }}
-          style={styles.pie}
+          style={[styles.pie, { paddingBottom: paddingPie }]}
         >
           <Pressable style={[styles.botonContinuar, enviando && styles.deshabilitado]} onPress={continuar} disabled={enviando}>
             <LinearGradient

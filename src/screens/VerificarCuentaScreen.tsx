@@ -11,6 +11,7 @@ import { IDIOMAS, Traducciones } from '../i18n/traducciones';
 import { useT } from '../i18n/useT';
 import { useAppStore } from '../store/appStore';
 import { apiEnviarSms, ErrorApi } from '../services/api';
+import { useResponsive } from '../hooks/useResponsive';
 
 const COLOR_MENTA = '#6FFBBE';
 const COLOR_DORADO = '#FACC15';
@@ -43,6 +44,7 @@ export function VerificarCuentaScreen() {
   const volverAtras = useAppStore(s => s.volverAtras);
   const verificarCuenta = useAppStore(s => s.verificarCuenta);
   const notificar = useAppStore(s => s.notificar);
+  const { paddingBarra, paddingContenido, paddingPie } = useResponsive();
 
   const [fase, setFase] = useState<'datos' | 'otp'>('datos');
 
@@ -135,7 +137,7 @@ export function VerificarCuentaScreen() {
       end={{ x: 0.5, y: 1 }}
       style={styles.fondo}
     >
-      <View style={styles.barraSuperior}>
+      <View style={[styles.barraSuperior, { paddingTop: paddingBarra }]}>
         <Pressable style={styles.botonIcono} onPress={volverAtras} disabled={verificando}>
           <IconoDado color={COLOR_DORADO} size={22} />
         </Pressable>
@@ -145,7 +147,7 @@ export function VerificarCuentaScreen() {
 
       {fase === 'datos' ? (
         <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <ScrollView contentContainerStyle={styles.contenido} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          <ScrollView contentContainerStyle={[styles.contenido, { paddingTop: paddingContenido }]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             <View style={styles.cabecera}>
               <Text style={styles.tituloCabecera}>{t('verificarCuenta')}</Text>
               <Text style={styles.subtituloCabecera}>{t('verificarCuentaDesc')}</Text>
@@ -307,7 +309,7 @@ export function VerificarCuentaScreen() {
             colors={['rgba(2,36,22,0)', 'rgba(2,36,22,0.9)', '#022416']}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}
-            style={styles.pie}
+            style={[styles.pie, { paddingBottom: paddingPie }]}
           >
             <Pressable style={styles.botonContinuar} onPress={continuar}>
               <LinearGradient
@@ -323,7 +325,7 @@ export function VerificarCuentaScreen() {
           </LinearGradient>
         </KeyboardAvoidingView>
       ) : (
-        <ScrollView contentContainerStyle={styles.contenido} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={[styles.contenido, { paddingTop: paddingContenido }]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <View style={styles.cabecera}>
             <Text style={styles.tituloCabecera}>{t('verificacionSms')}</Text>
             <Text style={styles.subtituloCabecera}>{telefono}</Text>
@@ -370,7 +372,7 @@ export function VerificarCuentaScreen() {
             colors={['rgba(2,36,22,0)', 'rgba(2,36,22,0.9)', '#022416']}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}
-            style={styles.pie}
+            style={[styles.pie, { paddingBottom: paddingPie }]}
           >
             <Pressable style={[styles.botonContinuar, verificando && styles.deshabilitado]} onPress={confirmarVerificacion} disabled={verificando}>
               <LinearGradient
