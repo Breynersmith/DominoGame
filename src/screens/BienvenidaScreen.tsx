@@ -156,10 +156,11 @@ const styles = StyleSheet.create({
   bloqueLogo: {
     alignItems: 'center',
     marginBottom: 40,
-    transform: scale(0.75),
     padding: 20,
+    scale: 0.75,
   },
   tarjetaLogo: {
+    scale:0.75,
     width: 196,
     height: 112,
     borderRadius: 26,
