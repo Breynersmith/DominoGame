@@ -156,10 +156,11 @@ const styles = StyleSheet.create({
   bloqueLogo: {
     alignItems: 'center',
     marginBottom: 40,
+    padding: 20,
   },
   tarjetaLogo: {
-    width: 216,
-    height: 132,
+    width: 196,
+    height: 112,
     borderRadius: 26,
     backgroundColor: '#efeeea',
     borderWidth: 4,
@@ -335,6 +336,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     padding: 10,
+    backgroundColor: black,
     fontFamily: FONT_INTER_MEDIUM,
   },
 });
