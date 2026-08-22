@@ -327,8 +327,8 @@ const styles = StyleSheet.create({
   pie: {
     width: '100%',
     alignItems: 'center',
-    paddingBottom: 80,
-    paddingTop: 80,
+    marginBottom: 80,
+    marginTop: 80,
     zIndex: 1,
     opacity: 0.7,
   },
@@ -336,7 +336,7 @@ const styles = StyleSheet.create({
     color: COLOR_MENTA_CLARO,
     fontSize: 13,
     lineHeight: 18,
-    paddingTop: 40,
+    paddingTop: 6,
     fontFamily: FONT_INTER_MEDIUM,
   },
 });
