@@ -335,8 +335,9 @@ const styles = StyleSheet.create({
     color: COLOR_MENTA_CLARO,
     fontSize: 13,
     lineHeight: 18,
+    marginTop: 40,
     padding: 10,
-    backgroundColor: black,
+    background: 000000,
     fontFamily: FONT_INTER_MEDIUM,
   },
 });
