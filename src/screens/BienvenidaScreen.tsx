@@ -327,8 +327,8 @@ const styles = StyleSheet.create({
   pie: {
     width: '100%',
     alignItems: 'center',
-    paddingBottom: 100,
-    paddingTop: 40,
+    paddingBottom: 80,
+    paddingTop: 80,
     zIndex: 1,
     opacity: 0.7,
   },
