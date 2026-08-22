@@ -334,6 +334,7 @@ const styles = StyleSheet.create({
     color: COLOR_MENTA_CLARO,
     fontSize: 13,
     lineHeight: 18,
+    padding: 10,
     fontFamily: FONT_INTER_MEDIUM,
   },
 });
