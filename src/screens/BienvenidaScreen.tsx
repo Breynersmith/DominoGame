@@ -268,7 +268,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 6,
-    marginTop: 4,
+    marginTop: 10,
   },
   textoRegistro: {
     color: '#d1d5db',
@@ -328,6 +328,7 @@ const styles = StyleSheet.create({
     width: '100%',
     alignItems: 'center',
     paddingBottom: 100,
+    paddingTop: 40,
     zIndex: 1,
     opacity: 0.7,
   },
@@ -335,9 +336,7 @@ const styles = StyleSheet.create({
     color: COLOR_MENTA_CLARO,
     fontSize: 13,
     lineHeight: 18,
-    marginTop: 40,
-    padding: 10,
-    background: 000000,
+    paddingTop: 40,
     fontFamily: FONT_INTER_MEDIUM,
   },
 });
